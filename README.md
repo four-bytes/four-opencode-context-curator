@@ -1,17 +1,12 @@
-# @four-bytes/opencode-context-curator
+# @four-bytes/four-opencode-context-curator
 
-**Status:** Sprint 2, geplant
+opencode-Plugin: kuratiert Context vor LLM-Request — statt full-file nur geänderte Blöcke + N Kontext-Zeilen. Token-Budget-Steuerung.
 
-Pre-Prompt-Hook, der Files vor dem Senden an den LLM curated: Statt full-file Context nur geänderte Blöcke + N=10 Kontext-Zeilen. Token-Budget-Steuerung mit konfigurierbarem Hard-Limit (default 8000).
+**Status:** Alpha v0.1.0 — Skeleton (Sprint 2 der opencode-plugins Strategy).
 
-## Zweck
+## Limitationen v0.1.0
+- Nur Skeleton, keine Curation-Logik
+- Hook-Implementation in Issue #2 (Pfad B: Workaround via experimental.chat.system.transform)
 
-Größter sofortiger Kosten-Hebel. Niedriger Aufwand (Hook-API), lernt opencode-Plugin-API an einem überschaubaren Fall.
-
-## Lizenz
-
-Apache-2.0
-
-## Meta-Repo
-
-[four-bytes/opencode-plugins](https://github.com/four-bytes/opencode-plugins)
+## License
+Apache-2.0 — Copyright 2025 Four Bytes
