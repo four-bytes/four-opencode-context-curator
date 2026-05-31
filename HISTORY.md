@@ -1,5 +1,12 @@
 # Project Change History
 
+## v0.3.0 — 2026-05-31
+
+### Added
+- core_prefix Layer (Issue #3): Statische Global Rules (Stop-Mode, Search, Quality Gates)
+- Layer-Datei: src/layers/core-prefix.ts mit CorePrefixLayer-Klasse
+- Tests: 2 Cases (static content, source reference)
+
 ## v0.2.0 — 2026-05-31
 
 ### Added
