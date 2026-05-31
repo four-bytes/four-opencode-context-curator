@@ -1,11 +1,29 @@
 import type { Plugin } from "@opencode-ai/plugin";
+import { DEFAULT_LAYERS, type Layer } from "./layers.js";
+import { createHookContext, runLayerPipeline } from "./hook.js";
 
 /**
- * Curates context for opencode requests — sends only changed blocks + N context lines.
- * Sprint 2: skeleton only, hooks come in #2.
+ * Curates system prompt context via layered cacheable prefixes.
+ * Wave P4a (BIG WIN): 4 Cache-Layer (core_prefix, repo_profile, task_slice, issue_slice).
  */
 export const FourContextCuratorPlugin: Plugin = async (_ctx) => {
-  return {};
+  const layers: Layer[] = []; // Layer implementations come in issues #3-#5
+
+  const ctx = createHookContext(DEFAULT_LAYERS, layers);
+
+  return {
+    "experimental.chat.system.transform": async (_input, output) => {
+      const layerContents = await runLayerPipeline(ctx);
+
+      if (layerContents.length > 0) {
+        const prefix = [
+          "── CONTEXT CURATOR (Layered Cacheable Prefixes) ──",
+          ...layerContents,
+        ].join("\n\n");
+        output.system.push(prefix);
+      }
+    },
+  };
 };
 
 export default FourContextCuratorPlugin;

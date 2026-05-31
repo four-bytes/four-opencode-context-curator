@@ -30,7 +30,7 @@
   },
   "opencode": {
     "type": "plugin",
-    "hooks": []
+    "hooks": ["experimental.chat.system.transform"]
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.15.10"
