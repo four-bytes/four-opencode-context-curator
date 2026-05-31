@@ -1,5 +1,13 @@
 # Project Change History
 
+## v0.5.0 — 2026-05-31
+
+### Added
+- task_slice Layer (Issue #5): Liest Session-Task aus OPENDOC_TASK Env, TTL 30min
+- issue_slice Layer (Issue #5): Detektiert GitHub-Issue via Branch-Name (GH-NR) oder Env, fetch via gh CLI
+- 4 Tests (3 task + 1 issue)
+- 3 Cache-Layer jetzt registriert: core_prefix, task_slice, issue_slice (repo_profile ausstehend)
+
 ## v0.4.0 — 2026-05-31
 
 ### Added
@@ -19,14 +27,14 @@
 
 ### Added
 - Layered Cacheable Prefix Architecture (Issue #2, Wave P4a)
-- Type-System: `src/layers.ts` — LayerConfig, LayerContent, Layer
-- Pipeline: `src/hook.ts` — createHookContext, runLayerPipeline mit TTL-Cache
-- Plugin-Entry: `experimental.chat.system.transform` Hook registriert
+- Type-System: src/layers.ts — LayerConfig, LayerContent, Layer
+- Pipeline: src/hook.ts — createHookContext, runLayerPipeline mit TTL-Cache
+- Plugin-Entry: experimental.chat.system.transform Hook registriert
 - Layer-Implementations folgen in #3 (core_prefix), #4 (repo_profile), #5 (task_slice + issue_slice)
 
 ## v0.1.0 — 2026-05-31
 
 ### Added
 - Initial skeleton (Sprint 2 der opencode-plugins Strategy)
-- Plugin-Entry `src/four-opencode-context-curator.ts` (empty plugin)
+- Plugin-Entry src/four-opencode-context-curator.ts (empty plugin)
 - Keine Hooks oder Logik — kommt in Issue #2 ff.
