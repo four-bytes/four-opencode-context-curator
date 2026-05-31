@@ -1,4 +1,5 @@
 import type { Layer, LayerConfig, LayerContent } from "./layers.js";
+import { sanitizeLayerContent } from "./sanitize.js";
 
 export interface HookContext {
   layers: Layer[];
@@ -29,7 +30,7 @@ export async function runLayerPipeline(ctx: HookContext): Promise<string[]> {
     if (config.ttlMs) {
       const cached = ctx.cache.get(config.id);
       if (cached && (Date.now() - cached.updatedAt) < config.ttlMs) {
-        results.push(cached.content);
+        results.push(sanitizeLayerContent(cached.content));
         continue;
       }
     }
@@ -38,7 +39,7 @@ export async function runLayerPipeline(ctx: HookContext): Promise<string[]> {
       const content = await layer.generate();
       ctx.cache.set(config.id, content);
       if (content.content.trim()) {
-        results.push(content.content);
+        results.push(sanitizeLayerContent(content.content));
       }
     } catch (err) {
       // Layer failure = non-fatal. Logging via console, never block.
