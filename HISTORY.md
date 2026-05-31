@@ -1,5 +1,13 @@
 # Project Change History
 
+## v0.4.0 — 2026-05-31
+
+### Added
+- repo_profile Layer (Issue #4): Liest AGENTS.md/CLAUDE.md aus Workspace-Root
+- Extrahiert Tech-Stack, Conventions, Forbidden-Patterns (max 3000 chars)
+- Cache via repo-path-hash + file-mtime
+- Tests: 2 Cases
+
 ## v0.3.0 — 2026-05-31
 
 ### Added
