@@ -1,6 +1,7 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { DEFAULT_LAYERS, type Layer } from "./layers.js";
 import { createHookContext, runLayerPipeline } from "./hook.js";
+import { sanitizeLayerContent } from "./sanitize.js";
 import { CorePrefixLayer } from "./layers/core-prefix.js";
 import { RepoProfileLayer } from "./layers/repo-profile.js";
 import { TaskSliceLayer } from "./layers/task-slice.js";
@@ -27,7 +28,7 @@ export const FourContextCuratorPlugin: Plugin = async (_ctx) => {
       if (layerContents.length > 0) {
         const prefix = [
           "── CONTEXT CURATOR (Layered Cacheable Prefixes) ──",
-          ...layerContents,
+          ...layerContents.map(sanitizeLayerContent),
         ].join("\n\n");
         output.system.push(prefix);
       }

@@ -1,5 +1,11 @@
 # Project Change History
 
+## v0.5.1 — 2026-05-31
+
+### Fixed
+- System-Prompt-Injection: Sanitizer entfernt Sub-Agent-Artifakte (`</response>`, `</function_call>`, etc.) aus Layer-Content
+- `src/sanitize.ts`: Erkennung standalone closing XML/JSON-Artifakte vs. echte Code-Inhalte
+
 ## v0.5.0 — 2026-05-31
 
 ### Added
