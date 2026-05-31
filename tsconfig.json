@@ -6,7 +6,8 @@
     "moduleResolution": "bundler",
     "outDir": "dist",
     "rootDir": "src",
-    "lib": ["ESNext", "dom"],
+    "declaration": true,
+    "lib": ["ESNext"],
     "types": ["@types/bun"]
   },
   "include": ["src/**/*"],
