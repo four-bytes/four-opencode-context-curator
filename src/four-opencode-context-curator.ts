@@ -7,7 +7,7 @@ import { RepoProfileLayer } from "./layers/repo-profile.js";
 import { TaskSliceLayer } from "./layers/task-slice.js";
 import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
-import { createCompactionSignalHook } from "./compaction/signal-parser.js";
+import { createCompactionSignalHook, stripCompactionSignal } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
 import { getCompactionState } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
@@ -134,6 +134,17 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
             parts: Array<{ type: string; text?: string }>;
           }>,
         );
+
+        // Strip compaction_signal from visible output
+        for (const msg of output.messages) {
+          const m = msg as { parts?: Array<{ type: string; text?: string }> };
+          if (!Array.isArray(m.parts)) continue;
+          for (const part of m.parts) {
+            if (part.type === "text" && typeof part.text === "string") {
+              part.text = stripCompactionSignal(part.text);
+            }
+          }
+        }
       } catch {
         // Non-blocking
       }
