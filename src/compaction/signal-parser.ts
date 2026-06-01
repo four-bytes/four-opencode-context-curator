@@ -71,14 +71,27 @@ export function createCompactionSignalHook(onSignal?: CompactionSignalCallback):
       if (signal) {
         setLastSignal(signal);
 
-        // Notify caller (for proactive compaction trigger)
-        if (onSignal) {
-          const hookInput = input as CompactionHookInput;
-          const sid = hookInput.sessionID || "";
+        // Toast + callback for proactive compaction
+        const hookInput = input as CompactionHookInput;
+        const sid = hookInput.sessionID || "";
+
+        if (signal.advice === "compact_now") {
           // eslint-disable-next-line no-console
           console.error(
-            `[four-cc:compaction] signal parsed: ${signal.advice} sessionID="${sid}" blocks=${signal.safeToCompact.length}`,
+            `\n🔄 COMPACTION SIGNAL: compact_now — ${signal.reason}`,
           );
+          // eslint-disable-next-line no-console
+          console.error(
+            `   safe_to_compact: ${signal.safeToCompact.join(", ") || "(none)"}`,
+          );
+        } else if (signal.advice === "compact_soon") {
+          // eslint-disable-next-line no-console
+          console.error(
+            `\n⏳ COMPACTION SIGNAL: compact_soon — ${signal.reason}`,
+          );
+        }
+
+        if (onSignal) {
           onSignal(signal, sid);
         }
 
