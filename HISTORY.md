@@ -1,14 +1,17 @@
 # Project Change History
 
-<<<<<<< HEAD
-## v0.7.0 — 2026-06-01
+## v0.10.0 — 2026-06-01
 
-### Changed
-- Aggressive message compaction (#24): compact_now drops oldest messages (keeps last 15)
-- sessionId extracted from message info (not env)
-- Logging verbessert: dropped count + sessionId im console.error
-- Tests: 2 neue Tests (drop verification, compact_soon no-drop)
-=======
+### Added
+- aktiver compact_now-Trigger: löst opencode compact-Endpoint via SDK-client aus, sobald verfügbar; robuste Laufzeit-Erkennung mehrerer Methodenpfade mit graceful fallback auf passive Compaction (#37)
+
+## v0.9.1 — 2026-06-01
+
+### Fixed
+- compact_now ohne safe_to_compact ist kein No-Op mehr: Drop auf letzte 15 + Truncate + Dedup laufen jetzt auch bei leerer Block-Liste (#35)
+- compact_soon ohne safe_to_compact truncatet/dedupliziert, droppt nicht (#35)
+- toten aktiven Trigger client.v2.session.compact entfernt — opencode-API existiert nicht (#35)
+
 ## v0.9.0 — 2026-06-01
 
 ### Fixed
@@ -24,15 +27,14 @@
 - Proactive compaction (#25): `compact_now` signal trigger opencode's `client.v2.session.compact()` API
 - Deferred compaction via setTimeout to avoid deadlock in hook processing
 - signal-parser callback pattern for external compaction trigger
->>>>>>> origin/main
 
-## v0.9.1 — 2026-06-01
+## v0.7.0 — 2026-06-01
 
-### Fixed
-- compact_now ohne safe_to_compact ist kein No-Op mehr: Drop auf letzte 15 + Truncate + Dedup laufen jetzt auch bei leerer Block-Liste (#35)
-- compact_soon ohne safe_to_compact truncatet/dedupliziert, droppt nicht (#35)
-- toten aktiven Trigger client.v2.session.compact entfernt — opencode-API existiert nicht (#35)
-
+### Changed
+- Aggressive message compaction (#24): compact_now drops oldest messages (keeps last 15)
+- sessionId extracted from message info (not env)
+- Logging verbessert: dropped count + sessionId im console.error
+- Tests: 2 neue Tests (drop verification, compact_soon no-drop)
 ## v0.6.0 — 2026-06-01
 
 ### Added
