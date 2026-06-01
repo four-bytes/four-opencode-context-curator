@@ -45,7 +45,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
 
       output.system.push(createCompactionInstruction());
     },
-    "chat.message": createCompactionSignalHook((signal, sessionID) => {
+    event: createCompactionSignalHook((signal, sessionID) => {
       if (signal.advice === "compact_now" && sessionID) {
         const sid = sessionID;
         const reason = signal.reason;
