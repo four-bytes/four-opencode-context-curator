@@ -47,7 +47,9 @@ export function parseCompactionSignal(text: string): CompactionSignal | null {
 
 export type CompactionHookHandler = (input: unknown, output: unknown) => Promise<void>;
 
-export function createCompactionSignalHook(): CompactionHookHandler {
+export type CompactionSignalCallback = (signal: CompactionSignal) => void;
+
+export function createCompactionSignalHook(onSignal?: CompactionSignalCallback): CompactionHookHandler {
   return async (input: unknown, output: unknown) => {
     try {
       const message = (input as { message?: unknown }).message;
@@ -62,6 +64,11 @@ export function createCompactionSignalHook(): CompactionHookHandler {
       const signal = parseCompactionSignal(text);
       if (signal) {
         setLastSignal(signal);
+
+        // Notify caller (for proactive compaction trigger)
+        if (onSignal) {
+          onSignal(signal);
+        }
 
         // Strip compaction signal from output parts (not user-visible)
         const outputObj = output as {
