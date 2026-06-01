@@ -131,4 +131,36 @@ describe("compactMessageHistory", () => {
     const second = compactMessageHistory(messages);
     expect(second.applied).toBe(false);
   });
+
+  it("drops old messages on compact_now (aggressive)", () => {
+    setLastSignal({
+      advice: "compact_now",
+      reason: "session too large",
+      safeToCompact: ["block_trim"],
+    });
+    // 25 messages — should keep only 15
+    const messages: MessageItem[] = Array.from({ length: 25 }, (_, i) =>
+      makeMsg([makeTextPart(`message ${i + 1}`)]),
+    );
+    const result = compactMessageHistory(messages);
+    expect(result.applied).toBe(true);
+    expect(messages.length).toBe(15); // 25 - 10 dropped
+    expect(result.messagesBefore).toBe(25);
+    expect(result.messagesAfter).toBe(15);
+    expect(result.reductionPct).toBeGreaterThan(0);
+  });
+
+  it("does not drop messages on compact_soon", () => {
+    setLastSignal({
+      advice: "compact_soon",
+      reason: "growing but ok",
+      safeToCompact: ["block1"],
+    });
+    const messages: MessageItem[] = Array.from({ length: 20 }, (_, i) =>
+      makeMsg([makeTextPart(`msg ${i}`)]),
+    );
+    const result = compactMessageHistory(messages);
+    expect(result.applied).toBe(true);
+    expect(messages.length).toBe(20); // No dropping on compact_soon
+  });
 });
