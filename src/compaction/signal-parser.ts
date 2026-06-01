@@ -1,3 +1,5 @@
+import { setLastSignal } from "./state.js";
+
 export interface CompactionSignal {
   advice: "no_compact" | "compact_soon" | "compact_now";
   reason: string;
@@ -59,6 +61,7 @@ export function createCompactionSignalHook(): CompactionHookHandler {
 
       const signal = parseCompactionSignal(text);
       if (signal) {
+        setLastSignal(signal);
         // eslint-disable-next-line no-console
         console.error(
           `[four-cc:compaction] SIGNAL: ${signal.advice} — ${signal.reason}${signal.safeToCompact.length ? ` (safe: ${signal.safeToCompact.join(", ")})` : ""}`,

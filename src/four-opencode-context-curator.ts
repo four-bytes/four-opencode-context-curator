@@ -8,6 +8,7 @@ import { TaskSliceLayer } from "./layers/task-slice.js";
 import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
 import { createCompactionSignalHook } from "./compaction/signal-parser.js";
+import { applyPruning } from "./compaction/pruning-engine.js";
 
 /**
  * Curates system prompt context via layered cacheable prefixes.
@@ -28,9 +29,11 @@ export const FourContextCuratorPlugin: Plugin = async (_ctx) => {
       const layerContents = await runLayerPipeline(ctx);
 
       if (layerContents.length > 0) {
+        const sanitized = layerContents.map(sanitizeLayerContent);
+        const pruned = applyPruning(sanitized);
         const prefix = [
           "── CONTEXT CURATOR (Layered Cacheable Prefixes) ──",
-          ...layerContents.map(sanitizeLayerContent),
+          ...pruned.contents,
         ].join("\n\n");
         output.system.push(prefix);
       }
