@@ -33,6 +33,14 @@ safe_to_compact: issue_5_research, tool_logs_turn_10-20
     expect(signal!.safeToCompact).toEqual(["issue_5_research", "tool_logs_turn_10-20"]);
   });
 
+  it("parses compact_now without safe_to_compact line (returns empty array)", () => {
+    const text = "compaction_advice: compact_now\nreason: wrapping up";
+    const signal = parseCompactionSignal(text);
+    expect(signal).not.toBeNull();
+    expect(signal!.advice).toBe("compact_now");
+    expect(signal!.safeToCompact).toEqual([]);
+  });
+
   it("parses compact_soon without safe_to_compact", () => {
     const text = "compaction_advice: compact_soon\nreason: Context growing but stable";
     const signal = parseCompactionSignal(text);

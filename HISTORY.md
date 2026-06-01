@@ -2,6 +2,9 @@
 
 ## v0.9.0 — 2026-06-01
 
+### Fixed
+- Fix (#33): compact_now triggert API-Compaction jetzt immer, safe_to_compact ist optional
+
 ### Added
 - Trigger-Diary (#28): compact_now Event wird ins JSONL-Diary geschrieben
 - Toast-Notification: ⚠️ COMPACTION TRIGGERED im stderr/TUI
