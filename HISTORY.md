@@ -1,5 +1,13 @@
 # Project Change History
 
+## v0.7.0 — 2026-06-01
+
+### Changed
+- Aggressive message compaction (#24): compact_now drops oldest messages (keeps last 15)
+- sessionId extracted from message info (not env)
+- Logging verbessert: dropped count + sessionId im console.error
+- Tests: 2 neue Tests (drop verification, compact_soon no-drop)
+
 ## v0.6.0 — 2026-06-01
 
 ### Added
