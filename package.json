@@ -30,7 +30,7 @@
   },
   "opencode": {
     "type": "plugin",
-    "hooks": ["experimental.chat.system.transform", "chat.message", "experimental.session.compacting", "experimental.chat.messages.transform"]
+    "hooks": ["experimental.chat.system.transform", "event", "experimental.session.compacting", "experimental.chat.messages.transform"]
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.15.10"
