@@ -10,6 +10,7 @@ import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
 import { createCompactionSignalHook } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
+import { compactMessageHistory } from "./compaction/message-compactor.js";
 
 /**
  * Curates system prompt context via layered cacheable prefixes.
@@ -43,6 +44,18 @@ export const FourContextCuratorPlugin: Plugin = async (_ctx) => {
       output.system.push(createCompactionInstruction());
     },
     "chat.message": createCompactionSignalHook(),
+    "experimental.chat.messages.transform": async (_input, output) => {
+      try {
+        compactMessageHistory(
+          output.messages as Array<{
+            info: { role?: string };
+            parts: Array<{ type: string; text?: string }>;
+          }>,
+        );
+      } catch {
+        // Non-blocking
+      }
+    },
     "experimental.session.compacting": async (input, output) => {
       try {
         const state = getCompactionState();
