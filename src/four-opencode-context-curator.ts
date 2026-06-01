@@ -48,24 +48,54 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         signal.safeToCompact.length > 0 &&
         sessionID
       ) {
-        // Trigger compaction immediately via setTimeout to avoid deadlock
+// Trigger compaction immediately via setTimeout to avoid deadlock
         const sid = sessionID;
+        const reason = signal.reason;
+        const blocks = signal.safeToCompact.length;
+
+        // Write trigger event to diary
+        try {
+          (async () => {
+            const { writeDiaryEntry } = await import("./compaction/diary.js");
+            writeDiaryEntry({
+              ts: Date.now(),
+              advice: signal.advice,
+              reason: signal.reason,
+              blocksCondensed: blocks,
+              duplicatesRemoved: 0,
+              linesBefore: 0,
+              linesAfter: 0,
+              reductionPct: 0,
+              sessionId: sid,
+              triggered: true,
+            });
+          })().catch(() => {});
+        } catch {}
+
         setTimeout(() => {
           try {
+            // eslint-disable-next-line no-console
+            console.error(
+              `\n⚠️  COMPACTION TRIGGERED ⚠️`,
+            );
+            // eslint-disable-next-line no-console
+            console.error(
+              `[four-cc:compaction] compact_now → session ${sid}: ${reason} (${blocks} blocks)`,
+            );
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (ctx.client as any).v2?.session
               ?.compact({ sessionID: sid })
               .then(() => {
                 // eslint-disable-next-line no-console
-                console.error(`[four-cc:compaction] compact triggered for session ${sid}: ${signal.reason}`);
+                console.error(`[four-cc:compaction] ✅ compact() API called successfully`);
               })
               .catch((err: unknown) => {
                 // eslint-disable-next-line no-console
-                console.error(`[four-cc:compaction] compact API call failed:`, err);
+                console.error(`[four-cc:compaction] ❌ compact API call failed:`, err);
               });
           } catch (err) {
             // eslint-disable-next-line no-console
-            console.error(`[four-cc:compaction] compact trigger failed:`, err);
+            console.error(`[four-cc:compaction] ❌ compact trigger failed:`, err);
           }
         }, 100);
       }
