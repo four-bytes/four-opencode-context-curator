@@ -45,76 +45,74 @@ export function parseCompactionSignal(text: string): CompactionSignal | null {
   return { advice, reason, safeToCompact };
 }
 
-export type CompactionHookHandler = (input: unknown, output: unknown) => Promise<void>;
+export type CompactionSignalCallback = (signal: CompactionSignal, sessionID: string) => void;
 
-export interface CompactionHookInput {
-  sessionID?: string;
-  message?: unknown;
+/**
+ * Loose structural type matching the EventMessagePartUpdated shape
+ * from @opencode-ai/sdk (transitive dep, not directly importable).
+ */
+interface TextPartPayload {
+  id: string;
+  sessionID: string;
+  messageID: string;
+  type: "text";
+  text: string;
   [key: string]: unknown;
 }
 
-export type CompactionSignalCallback = (signal: CompactionSignal, sessionID: string) => void;
+interface PartUpdatedEvent {
+  type: "message.part.updated";
+  properties: {
+    sessionID: string;
+    part: TextPartPayload;
+    time: number;
+  };
+}
 
-export function createCompactionSignalHook(onSignal?: CompactionSignalCallback): CompactionHookHandler {
-  return async (input: unknown, output: unknown) => {
+export function createCompactionSignalHook(onSignal?: CompactionSignalCallback) {
+  return async (input: { event: { type: string; properties: Record<string, unknown> } }): Promise<void> => {
     try {
-      const message = (input as { message?: unknown }).message;
-      if (!message || typeof message !== "object") return;
+      const ev = input.event;
+      if (ev.type !== "message.part.updated") return;
 
-      const info = (message as { info?: { role?: string } } | undefined)?.info;
-      if (!info || info.role !== "assistant") return;
+      const props = ev.properties as PartUpdatedEvent["properties"];
+      const part = props.part;
+      if (!part || part.type !== "text") return;
 
-      const text = extractText(message);
+      const text = part.text;
       if (!text) return;
 
       const signal = parseCompactionSignal(text);
-      if (signal) {
-        setLastSignal(signal);
+      if (!signal) return;
 
-        // Toast + callback for proactive compaction
-        const hookInput = input as CompactionHookInput;
-        const sid = hookInput.sessionID || "";
+      setLastSignal(signal);
+      const sid = props.sessionID || "";
 
-        if (signal.advice === "compact_now") {
-          // eslint-disable-next-line no-console
-          console.error(
-            `\n🔄 COMPACTION SIGNAL: compact_now — ${signal.reason}`,
-          );
-          // eslint-disable-next-line no-console
-          console.error(
-            `   safe_to_compact: ${signal.safeToCompact.join(", ") || "(none)"}`,
-          );
-        } else if (signal.advice === "compact_soon") {
-          // eslint-disable-next-line no-console
-          console.error(
-            `\n⏳ COMPACTION SIGNAL: compact_soon — ${signal.reason}`,
-          );
-        }
-
-        if (onSignal) {
-          onSignal(signal, sid);
-        }
-
-        // Strip compaction signal from output parts (not user-visible)
-        const outputObj = output as {
-          parts?: Array<{ type: string; text?: string }>;
-        };
-        if (outputObj.parts) {
-          for (const part of outputObj.parts) {
-            if (part.type === "text" && part.text) {
-              // Remove compaction_advice block from end of text
-              part.text = part.text
-                .replace(/\n*compaction_advice:.*[\s\S]*$/i, "")
-                .trimEnd();
-            }
-          }
-        }
-
+      // Toast + callback for proactive compaction
+      if (signal.advice === "compact_now") {
         // eslint-disable-next-line no-console
         console.error(
-          `[four-cc:compaction] SIGNAL: ${signal.advice} — ${signal.reason}${signal.safeToCompact.length ? ` (safe: ${signal.safeToCompact.join(", ")})` : ""}`,
+          `\n🔄 COMPACTION SIGNAL: compact_now — ${signal.reason}`,
+        );
+        // eslint-disable-next-line no-console
+        console.error(
+          `   safe_to_compact: ${signal.safeToCompact.join(", ") || "(none)"}`,
+        );
+      } else if (signal.advice === "compact_soon") {
+        // eslint-disable-next-line no-console
+        console.error(
+          `\n⏳ COMPACTION SIGNAL: compact_soon — ${signal.reason}`,
         );
       }
+
+      if (onSignal) {
+        onSignal(signal, sid);
+      }
+
+      // eslint-disable-next-line no-console
+      console.error(
+        `[four-cc:compaction] SIGNAL: ${signal.advice} — ${signal.reason}${signal.safeToCompact.length ? ` (safe: ${signal.safeToCompact.join(", ")})` : ""}`,
+      );
     } catch {
       // Silent — never throw from hook
     }

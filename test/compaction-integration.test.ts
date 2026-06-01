@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "bun:test";
 import { applyPruning } from "../src/compaction/pruning-engine.js";
 import { setLastSignal, clearSignal, getCompactionState } from "../src/compaction/state.js";
 import { writeDiaryEntry } from "../src/compaction/diary.js";
-import type { CompactionSignal } from "../src/compaction/signal-parser.js";
+import { createCompactionSignalHook, type CompactionSignal } from "../src/compaction/signal-parser.js";
 import { existsSync, readFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -88,6 +88,57 @@ describe("Compaction Integration", () => {
     // Stats should be consistent
     expect(stats.blocksCondensed).toBeGreaterThanOrEqual(0);
     expect(stats.duplicatesRemoved).toBeGreaterThanOrEqual(0);
+  });
+
+  it("event hook sets signal and triggers diary via pruning pipeline", async () => {
+    // Simulate the full flow: event hook → setLastSignal → pruning → diary
+    const text = [
+      "Some code output here...",
+      "",
+      "compaction_advice: compact_now",
+      "reason: integration test complete, logs accumulated",
+      "safe_to_compact: integration_test, test_logs",
+      "",
+    ].join("\n");
+
+    const hook = createCompactionSignalHook();
+    await hook({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          sessionID: "session-integration",
+          part: {
+            id: "part-integration",
+            sessionID: "session-integration",
+            messageID: "msg-integration",
+            type: "text",
+            text,
+          },
+          time: Date.now(),
+        },
+      },
+    });
+
+    const state = getCompactionState();
+    expect(state.lastSignal).not.toBeNull();
+    expect(state.lastSignal!.advice).toBe("compact_now");
+    expect(state.lastSignal!.reason).toBe("integration test complete, logs accumulated");
+    expect(state.lastSignal!.safeToCompact).toEqual(["integration_test", "test_logs"]);
+
+    // Now simulate pruning + diary write (existing pipeline)
+    const input = [
+      'ACTIVE ISSUE: #99\n{"title":"Integration event hook","number":99}',
+      Array(100).fill("repeated log line").join("\n"),
+    ];
+
+    applyPruning(input);
+
+    // Verify diary was written
+    const diaryPath = join(CACHE_DIR, `compaction-events-${new Date().toISOString().split("T")[0]}.jsonl`);
+    expect(existsSync(diaryPath)).toBe(true);
+    const content = readFileSync(diaryPath, "utf-8");
+    expect(content).toContain("compact_now");
+    expect(content).toContain("integration test complete");
   });
 
   it("no diary entry when pruning is no-op", () => {
