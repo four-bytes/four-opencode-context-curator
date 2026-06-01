@@ -47,7 +47,15 @@ export function parseCompactionSignal(text: string): CompactionSignal | null {
 
 export type CompactionHookHandler = (input: unknown, output: unknown) => Promise<void>;
 
-export function createCompactionSignalHook(): CompactionHookHandler {
+export interface CompactionHookInput {
+  sessionID?: string;
+  message?: unknown;
+  [key: string]: unknown;
+}
+
+export type CompactionSignalCallback = (signal: CompactionSignal, sessionID: string) => void;
+
+export function createCompactionSignalHook(onSignal?: CompactionSignalCallback): CompactionHookHandler {
   return async (input: unknown, output: unknown) => {
     try {
       const message = (input as { message?: unknown }).message;
@@ -62,6 +70,30 @@ export function createCompactionSignalHook(): CompactionHookHandler {
       const signal = parseCompactionSignal(text);
       if (signal) {
         setLastSignal(signal);
+
+        // Toast + callback for proactive compaction
+        const hookInput = input as CompactionHookInput;
+        const sid = hookInput.sessionID || "";
+
+        if (signal.advice === "compact_now") {
+          // eslint-disable-next-line no-console
+          console.error(
+            `\n🔄 COMPACTION SIGNAL: compact_now — ${signal.reason}`,
+          );
+          // eslint-disable-next-line no-console
+          console.error(
+            `   safe_to_compact: ${signal.safeToCompact.join(", ") || "(none)"}`,
+          );
+        } else if (signal.advice === "compact_soon") {
+          // eslint-disable-next-line no-console
+          console.error(
+            `\n⏳ COMPACTION SIGNAL: compact_soon — ${signal.reason}`,
+          );
+        }
+
+        if (onSignal) {
+          onSignal(signal, sid);
+        }
 
         // Strip compaction signal from output parts (not user-visible)
         const outputObj = output as {
