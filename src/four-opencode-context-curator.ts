@@ -11,6 +11,7 @@ import { createCompactionSignalHook } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
 import { getCompactionState } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
+import { logDebugEvent } from "./debug-logger.js";
 
 /**
  * Curates system prompt context via layered cacheable prefixes.
@@ -29,6 +30,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
   return {
     "experimental.chat.system.transform": async (_input, output) => {
       const layerContents = await runLayerPipeline(hookCtx);
+      logDebugEvent("compaction.system.transform", { layerCount: layerContents.length });
 
       if (layerContents.length > 0) {
         const sanitized = layerContents.map(sanitizeLayerContent);
@@ -71,6 +73,13 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
           })().catch(() => {});
         } catch {}
 
+        logDebugEvent("compaction.signal", {
+          advice: signal.advice,
+          reason: signal.reason,
+          safeToCompact: signal.safeToCompact,
+          sessionID: sid,
+        });
+
         setTimeout(() => {
           try {
             // eslint-disable-next-line no-console
@@ -78,20 +87,25 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const client = (ctx.client as any);
             if (client?.v2?.session?.compact) {
+              logDebugEvent("compaction.compact.attempt", { sessionID: sid });
               client.v2.session.compact({ sessionID: sid })
                 .then(() => {
+                  logDebugEvent("compaction.compact.success", { sessionID: sid });
                   // eslint-disable-next-line no-console
                   console.error(`[four-cc] ✅ compaction started for session ${sid}`);
                 })
                 .catch((err: unknown) => {
+                  logDebugEvent("compaction.compact.failed", { sessionID: sid, error: String(err) });
                   // eslint-disable-next-line no-console
                   console.error(`[four-cc] ❌ compact API failed:`, err);
                 });
             } else {
+              logDebugEvent("compaction.compact.unavailable", { sessionID: sid });
               // eslint-disable-next-line no-console
               console.error(`[four-cc] ❌ client.v2.session.compact not available on this opencode version`);
             }
           } catch (err) {
+            logDebugEvent("compaction.trigger.error", { error: String(err) });
             // eslint-disable-next-line no-console
             console.error(`[four-cc] ❌ trigger error:`, err);
           }
@@ -103,6 +117,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         const state = getCompactionState();
         const signal = state.lastSignal;
         const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
+        logDebugEvent("compaction.compacting", { triggered, advice: signal?.advice ?? "none" });
 
         if (!triggered && (!signal || signal.advice === "no_compact")) {
           return;
@@ -149,6 +164,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
     },
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
+        logDebugEvent("compaction.messages.transform", { messageCount: output.messages.length });
         compactMessageHistory(
           output.messages as Array<{
             info: { role?: string };
