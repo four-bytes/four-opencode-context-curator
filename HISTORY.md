@@ -1,5 +1,11 @@
 # Project Change History
 
+## v0.9.0 — 2026-06-01
+
+### Added
+- Trigger-Diary (#28): compact_now Event wird ins JSONL-Diary geschrieben
+- Toast-Notification: ⚠️ COMPACTION TRIGGERED im stderr/TUI
+
 ## v0.8.0 — 2026-06-01
 
 ### Added
