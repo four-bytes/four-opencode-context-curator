@@ -163,4 +163,32 @@ describe("compactMessageHistory", () => {
     expect(result.applied).toBe(true);
     expect(messages.length).toBe(20); // No dropping on compact_soon
   });
+
+  it("compact_now with empty safe_to_compact still drops to KEEP_RECENT", () => {
+    setLastSignal({
+      advice: "compact_now",
+      reason: "test",
+      safeToCompact: [],
+    });
+    const messages: MessageItem[] = Array.from({ length: 25 }, (_, i) =>
+      makeMsg([makeTextPart(`message ${i + 1}`)]),
+    );
+    const result = compactMessageHistory(messages);
+    expect(result.applied).toBe(true);
+    expect(messages.length).toBe(15);
+  });
+
+  it("compact_soon with empty safe_to_compact truncates but does not drop", () => {
+    setLastSignal({
+      advice: "compact_soon",
+      reason: "test",
+      safeToCompact: [],
+    });
+    const messages: MessageItem[] = Array.from({ length: 20 }, (_, i) =>
+      makeMsg([makeTextPart(`msg ${i}`)]),
+    );
+    const result = compactMessageHistory(messages);
+    expect(result.applied).toBe(true);
+    expect(messages.length).toBe(20);
+  });
 });
