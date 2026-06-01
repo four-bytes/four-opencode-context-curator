@@ -11,6 +11,7 @@ import { createCompactionSignalHook } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
 import { getCompactionState } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
+import { triggerCompaction } from "./compaction/trigger.js";
 import { logDebugEvent } from "./debug-logger.js";
 
 /**
@@ -49,6 +50,17 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         const sid = sessionID;
         const reason = signal.reason;
         const blocks = signal.safeToCompact.length;
+        // Aktiver Trigger via SDK-Client
+        triggerCompaction(ctx.client, sid).then((found) => {
+          logDebugEvent("compaction.trigger.invoked", { sessionID: sid, found });
+          if (found) {
+            // eslint-disable-next-line no-console
+            console.error(`[four-cc] ✅ aktive Compaction ausgelöst (session ${sid})`);
+          } else {
+            // eslint-disable-next-line no-console
+            console.error(`[four-cc] ⏳ kein aktiver SDK-Pfad — passiv via messages.transform (session ${sid})`);
+          }
+        }).catch(() => {});
 
         // Write trigger event to diary
         try {
