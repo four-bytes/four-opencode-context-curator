@@ -1,5 +1,15 @@
 # Project Change History
 
+## v0.6.0 — 2026-06-01
+
+### Added
+- messages.transform Compaction (#22): Echte Message-History-Kürzung vor LLM-Call
+- `src/compaction/message-compactor.ts`: truncateMessageParts, deduplicateMessageParts
+- Tool-Outputs >50 Zeilen → Header+Footer + Marker
+- Duplicate-Tool-Outputs → "↑ see above (message N)" Referenz
+- Compaction-Statistiken geloggt via console.error
+- Tests: 9 message-compaction tests (60 total)
+
 ## v0.5.0 — 2026-06-01
 
 ### Added
