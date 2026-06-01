@@ -1,5 +1,13 @@
 # Project Change History
 
+## v0.5.0 — 2026-06-01
+
+### Added
+- Prefix-Token-Reduktion-Messung (#20): Integrationstest mit Mock-Workspace
+- `test/prefix-token-measurement.test.ts` — ≥50% Reduktion gegenüber Full-File-Context
+- Fixture `test/fixtures/sample-AGENTS.md` — realistische Projekt-Doku mit Filler
+- 5 neue Tests (core, repo, task, pipeline, reduction measurement)
+
 ## v0.4.0 — 2026-06-01
 
 ### Added
