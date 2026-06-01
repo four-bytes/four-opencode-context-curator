@@ -26,6 +26,13 @@
 - signal-parser callback pattern for external compaction trigger
 >>>>>>> origin/main
 
+## v0.9.1 — 2026-06-01
+
+### Fixed
+- compact_now ohne safe_to_compact ist kein No-Op mehr: Drop auf letzte 15 + Truncate + Dedup laufen jetzt auch bei leerer Block-Liste (#35)
+- compact_soon ohne safe_to_compact truncatet/dedupliziert, droppt nicht (#35)
+- toten aktiven Trigger client.v2.session.compact entfernt — opencode-API existiert nicht (#35)
+
 ## v0.6.0 — 2026-06-01
 
 ### Added

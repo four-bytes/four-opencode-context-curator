@@ -96,7 +96,7 @@ export function compactMessageHistory(messages: MessageItem[]): CompactionResult
   const state = getCompactionState();
   const signal = state.lastSignal;
 
-  if (!signal || signal.advice === "no_compact" || signal.safeToCompact.length === 0) {
+  if (!signal || signal.advice === "no_compact") {
     return {
       messagesBefore: messages.length,
       messagesAfter: messages.length,
@@ -109,7 +109,7 @@ export function compactMessageHistory(messages: MessageItem[]): CompactionResult
   }
 
   const newBlocks = signal.safeToCompact.filter((b) => !wasApplied(b));
-  if (newBlocks.length === 0) {
+  if (signal.safeToCompact.length > 0 && newBlocks.length === 0) {
     return {
       messagesBefore: messages.length,
       messagesAfter: messages.length,
