@@ -71,13 +71,13 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         }, 50);
       }
     },
-    "chat.message": createCompactionSignalHook((signal) => {
+    "chat.message": createCompactionSignalHook((signal, sessionID) => {
       // When compact_now or compact_soon with blocks, queue compaction
       if (
         (signal.advice === "compact_now" || signal.advice === "compact_soon") &&
         signal.safeToCompact.length > 0
       ) {
-        pendingCompaction = process.env.OPENDOC_SESSION_ID || "";
+        pendingCompaction = sessionID;
       }
     }),
     "experimental.session.compacting": async (input, output) => {
