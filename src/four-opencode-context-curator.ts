@@ -46,40 +46,31 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       output.system.push(createCompactionInstruction());
     },
     event: createCompactionSignalHook((signal, sessionID) => {
+      // Write diary entry for EVERY signal (fire-and-forget)
+      try {
+        (async () => {
+          const { writeDiaryEntry } = await import("./compaction/diary.js");
+          writeDiaryEntry({
+            ts: Date.now(),
+            advice: signal.advice,
+            reason: signal.reason,
+            blocksCondensed: signal.safeToCompact.length,
+            duplicatesRemoved: 0,
+            linesBefore: 0,
+            linesAfter: 0,
+            reductionPct: 0,
+            sessionId: sessionID ?? "",
+            triggered: signal.advice === "compact_now",
+          });
+        })().catch(() => {});
+      } catch {}
+
+      // Only trigger actual compaction for compact_now with a valid session
       if (signal.advice === "compact_now" && sessionID) {
         const sid = sessionID;
-        const reason = signal.reason;
-        const blocks = signal.safeToCompact.length;
-        // Aktiver Trigger via SDK-Client
         triggerCompaction(ctx.client, sid).then((found) => {
           logDebugEvent("compaction.trigger.invoked", { sessionID: sid, found });
-          if (found) {
-            // eslint-disable-next-line no-console
-            console.error(`[four-cc] ✅ aktive Compaction ausgelöst (session ${sid})`);
-          } else {
-            // eslint-disable-next-line no-console
-            console.error(`[four-cc] ⏳ kein aktiver SDK-Pfad — passiv via messages.transform (session ${sid})`);
-          }
         }).catch(() => {});
-
-        // Write trigger event to diary
-        try {
-          (async () => {
-            const { writeDiaryEntry } = await import("./compaction/diary.js");
-            writeDiaryEntry({
-              ts: Date.now(),
-              advice: signal.advice,
-              reason,
-              blocksCondensed: blocks,
-              duplicatesRemoved: 0,
-              linesBefore: 0,
-              linesAfter: 0,
-              reductionPct: 0,
-              sessionId: sid,
-              triggered: true,
-            });
-          })().catch(() => {});
-        } catch {}
 
         logDebugEvent("compaction.signal", {
           advice: signal.advice,
@@ -87,9 +78,6 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
           safeToCompact: signal.safeToCompact,
           sessionID: sid,
         });
-
-        // eslint-disable-next-line no-console
-        console.error(`[four-cc] compact_now akzeptiert — wird bei nächstem messages.transform/compacting angewandt (session ${sid})`);
       }
     }),
     "experimental.session.compacting": async (input, output) => {
@@ -133,11 +121,6 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         if (triggered) {
           delete process.env.CC_COMPACTION_TRIGGER;
         }
-
-        // eslint-disable-next-line no-console
-        console.error(
-          `[four-cc:compaction] session.compacting: tbg=${triggered}, signal=${signal?.advice ?? "none"}`,
-        );
       } catch {
         // Non-blocking
       }
