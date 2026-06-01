@@ -26,9 +26,6 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
 
   const hookCtx = createHookContext(DEFAULT_LAYERS, layers);
 
-  // Deferred compaction trigger (avoids deadlock in hook)
-  let pendingCompaction: string | null = null;
-
   return {
     "experimental.chat.system.transform": async (_input, output) => {
       const layerContents = await runLayerPipeline(hookCtx);
@@ -43,14 +40,16 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         output.system.push(prefix);
       }
 
-      // Inject compaction signal instruction (always)
       output.system.push(createCompactionInstruction());
-
-      // Trigger deferred compaction after prompt assembly
-      if (pendingCompaction) {
-        const sid = pendingCompaction;
-        pendingCompaction = null;
-        // Defer to next tick to avoid blocking current prompt
+    },
+    "chat.message": createCompactionSignalHook((signal, sessionID) => {
+      if (
+        (signal.advice === "compact_now") &&
+        signal.safeToCompact.length > 0 &&
+        sessionID
+      ) {
+        // Trigger compaction immediately via setTimeout to avoid deadlock
+        const sid = sessionID;
         setTimeout(() => {
           try {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -58,7 +57,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
               ?.compact({ sessionID: sid })
               .then(() => {
                 // eslint-disable-next-line no-console
-                console.error(`[four-cc:compaction] opencode compact triggered for session ${sid}`);
+                console.error(`[four-cc:compaction] compact triggered for session ${sid}: ${signal.reason}`);
               })
               .catch((err: unknown) => {
                 // eslint-disable-next-line no-console
@@ -68,16 +67,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
             // eslint-disable-next-line no-console
             console.error(`[four-cc:compaction] compact trigger failed:`, err);
           }
-        }, 50);
-      }
-    },
-    "chat.message": createCompactionSignalHook((signal, sessionID) => {
-      // When compact_now or compact_soon with blocks, queue compaction
-      if (
-        (signal.advice === "compact_now" || signal.advice === "compact_soon") &&
-        signal.safeToCompact.length > 0
-      ) {
-        pendingCompaction = sessionID;
+        }, 100);
       }
     }),
     "experimental.session.compacting": async (input, output) => {
