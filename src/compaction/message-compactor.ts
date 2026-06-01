@@ -174,10 +174,10 @@ export function compactMessageHistory(messages: MessageItem[]): CompactionResult
   });
 
   // eslint-disable-next-line no-console
-  console.error(
-    `[four-cc:compaction] messages.transform: ${messagesBefore}→${messagesAfter - removed} msgs ` +
+  console.warn(
+    `[four-cc:compaction] messages.transform: ${messagesBefore}→${messagesAfter} msgs ` +
       `(${removed} dropped), ${charsBefore}→${charsAfter} chars ` +
-      `(${reductionPct}% reduction, ${truncations} trunc, ${duplicates} dups) — ${signal.reason} ` +
+      `(${reductionPct}% reduction, ${truncations} trunc, ${duplicates} dups) — ${signal.advice}: ${signal.reason} ` +
       `[session: ${sessionId}]`,
   );
 

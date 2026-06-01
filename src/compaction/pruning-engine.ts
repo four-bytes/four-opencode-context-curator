@@ -203,7 +203,7 @@ export function applyPruning(
   });
 
   // eslint-disable-next-line no-console
-  console.error(
+  console.warn(
     `[four-cc:pruning] COMPACTED: ${stats.originalLines}→${stats.prunedLines} lines ` +
       `(${stats.blocksCondensed} blocks, ${stats.duplicatesRemoved} dups) — ${signal.reason}`,
   );

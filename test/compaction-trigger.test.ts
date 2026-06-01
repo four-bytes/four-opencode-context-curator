@@ -1,13 +1,18 @@
 import { test, expect } from "bun:test";
 import { triggerCompaction } from "../src/compaction/trigger.js";
 
-test("calls session.compact when available", async () => {
+const origProviderID = process.env.CC_COMPACTION_PROVIDER_ID;
+const origModelID = process.env.CC_COMPACTION_MODEL_ID;
+
+test("calls session.summarize when available with env vars", async () => {
+  process.env.CC_COMPACTION_PROVIDER_ID = "test-provider";
+  process.env.CC_COMPACTION_MODEL_ID = "test-model";
   let callCount = 0;
   let calledWith: unknown = undefined;
 
   const client = {
     session: {
-      compact: async (args: unknown) => {
+      summarize: async (args: unknown) => {
         callCount++;
         calledWith = args;
       },
@@ -17,7 +22,10 @@ test("calls session.compact when available", async () => {
   const result = await triggerCompaction(client, "sid1");
   expect(result).toBe(true);
   expect(callCount).toBe(1);
-  expect(calledWith).toEqual({ path: { sessionID: "sid1" } });
+  expect(calledWith).toEqual({
+    body: { providerID: "test-provider", modelID: "test-model", auto: true },
+    path: { id: "sid1" },
+  });
 });
 
 test("returns false for empty client", async () => {
@@ -28,7 +36,7 @@ test("returns false for empty client", async () => {
 test("returns false for missing sessionID", async () => {
   const client = {
     session: {
-      compact: async () => {},
+      summarize: async () => {},
     },
   };
   const result = await triggerCompaction(client, "");
@@ -36,9 +44,12 @@ test("returns false for missing sessionID", async () => {
 });
 
 test("does not throw when method rejects", async () => {
+  process.env.CC_COMPACTION_PROVIDER_ID = "test-provider";
+  process.env.CC_COMPACTION_MODEL_ID = "test-model";
+
   const client = {
     session: {
-      compact: async (_args: unknown) => {
+      summarize: async (_args: unknown) => {
         throw new Error("Netzwerkfehler");
       },
     },
@@ -53,41 +64,27 @@ test("does not throw when method rejects", async () => {
   }
 
   expect(threw).toBe(false);
-  // compact wirft → zählt als gescheitert → nächster Kandidat (session.compact mit {sessionID}) wirft auch
-  // → alle Kandidaten scheitern → false
+  // summarize wirft → zählt als gescheitert → Kandidaten durch → false
   expect(result).toBe(false);
 });
 
-test("falls back to v2.session.compact when session.compact missing", async () => {
-  let callCount = 0;
+test("skips summarize when env vars are missing", async () => {
+  delete process.env.CC_COMPACTION_PROVIDER_ID;
+  delete process.env.CC_COMPACTION_MODEL_ID;
 
+  let summarizeCalled = false;
   const client = {
-    v2: {
-      session: {
-        compact: async (_args: unknown) => {
-          callCount++;
-        },
+    session: {
+      summarize: async () => {
+        summarizeCalled = true;
       },
     },
   };
 
   const result = await triggerCompaction(client, "sid3");
-  expect(result).toBe(true);
-  expect(callCount).toBe(1);
-});
-
-test("falls back to postSessionCompact when nested paths missing", async () => {
-  let callCount = 0;
-
-  const client = {
-    postSessionCompact: async (_args: unknown) => {
-      callCount++;
-    },
-  };
-
-  const result = await triggerCompaction(client, "sid4");
-  expect(result).toBe(true);
-  expect(callCount).toBe(1);
+  expect(summarizeCalled).toBe(false);
+  // kein HTTP serverUrl, kein CC_COMPACTION_COMMAND → false
+  expect(result).toBe(false);
 });
 
 test("returns false for null client", async () => {
