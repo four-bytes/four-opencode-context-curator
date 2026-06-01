@@ -84,5 +84,19 @@ export async function triggerCompaction(client: unknown, sessionID: string): Pro
     }
   }
 
-  return false;
+  // Fallback: CC_COMPACTION_COMMAND env var
+  const cmd = process.env.CC_COMPACTION_COMMAND;
+  if (!cmd) return false;
+
+  try {
+    const interpolated = cmd.replace(/\{sessionID\}/g, sessionID);
+    const proc = Bun.spawn(["sh", "-c", interpolated], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const exitCode = await proc.exited;
+    return exitCode === 0;
+  } catch {
+    return false;
+  }
 }
