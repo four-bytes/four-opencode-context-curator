@@ -64,4 +64,13 @@ safe_to_compact: issue_5_research, tool_logs_turn_10-20
   it("returns null for unknown advice value", () => {
     expect(parseCompactionSignal("compaction_advice: maybe_later\nreason: huh")).toBeNull();
   });
+
+  it("parseCompactionSignal works after stripping", () => {
+    const raw = "Answer.\n\ncompaction_advice: compact_now\nreason: done";
+    const stripped = raw.replace(/\n*compaction_advice:.*[\s\S]*$/i, "").trimEnd();
+    expect(stripped).toBe("Answer.");
+    const signal = parseCompactionSignal(raw);
+    expect(signal).not.toBeNull();
+    expect(signal!.advice).toBe("compact_now");
+  });
 });

@@ -45,10 +45,10 @@ export function parseCompactionSignal(text: string): CompactionSignal | null {
   return { advice, reason, safeToCompact };
 }
 
-export type CompactionHookHandler = (input: unknown, _output: unknown) => Promise<void>;
+export type CompactionHookHandler = (input: unknown, output: unknown) => Promise<void>;
 
 export function createCompactionSignalHook(): CompactionHookHandler {
-  return async (input: unknown, _output: unknown) => {
+  return async (input: unknown, output: unknown) => {
     try {
       const message = (input as { message?: unknown }).message;
       if (!message || typeof message !== "object") return;
@@ -62,6 +62,22 @@ export function createCompactionSignalHook(): CompactionHookHandler {
       const signal = parseCompactionSignal(text);
       if (signal) {
         setLastSignal(signal);
+
+        // Strip compaction signal from output parts (not user-visible)
+        const outputObj = output as {
+          parts?: Array<{ type: string; text?: string }>;
+        };
+        if (outputObj.parts) {
+          for (const part of outputObj.parts) {
+            if (part.type === "text" && part.text) {
+              // Remove compaction_advice block from end of text
+              part.text = part.text
+                .replace(/\n*compaction_advice:.*[\s\S]*$/i, "")
+                .trimEnd();
+            }
+          }
+        }
+
         // eslint-disable-next-line no-console
         console.error(
           `[four-cc:compaction] SIGNAL: ${signal.advice} — ${signal.reason}${signal.safeToCompact.length ? ` (safe: ${signal.safeToCompact.join(", ")})` : ""}`,
@@ -71,4 +87,9 @@ export function createCompactionSignalHook(): CompactionHookHandler {
       // Silent — never throw from hook
     }
   };
+}
+
+/** Strip compaction_advice block from text (for testing). */
+export function stripCompactionSignal(text: string): string {
+  return text.replace(/\n*compaction_advice:.*[\s\S]*$/i, "").trimEnd();
 }
