@@ -1,5 +1,12 @@
 # Project Change History
 
+## v0.8.0 — 2026-06-01
+
+### Added
+- Proactive compaction (#25): `compact_now` signal trigger opencode's `client.v2.session.compact()` API
+- Deferred compaction via setTimeout to avoid deadlock in hook processing
+- signal-parser callback pattern for external compaction trigger
+
 ## v0.6.0 — 2026-06-01
 
 ### Added
