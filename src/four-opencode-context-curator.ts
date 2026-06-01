@@ -6,6 +6,8 @@ import { CorePrefixLayer } from "./layers/core-prefix.js";
 import { RepoProfileLayer } from "./layers/repo-profile.js";
 import { TaskSliceLayer } from "./layers/task-slice.js";
 import { IssueSliceLayer } from "./layers/issue-slice.js";
+import { createCompactionInstruction } from "./compaction/signal-injector.js";
+import { createCompactionSignalHook } from "./compaction/signal-parser.js";
 
 /**
  * Curates system prompt context via layered cacheable prefixes.
@@ -32,7 +34,11 @@ export const FourContextCuratorPlugin: Plugin = async (_ctx) => {
         ].join("\n\n");
         output.system.push(prefix);
       }
+
+      // Inject compaction signal instruction (always)
+      output.system.push(createCompactionInstruction());
     },
+    "chat.message": createCompactionSignalHook(),
   };
 };
 
