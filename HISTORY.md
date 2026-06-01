@@ -1,5 +1,21 @@
 # Project Change History
 
+## v0.4.0 — 2026-06-01
+
+### Added
+- Compaction Module (Wave P4a): Session-Inhalte heuristisch vor LLM-Calls kürzen
+- Compaction Signal-Injection (#12): `compaction_advice` Instruction im System-Prompt
+- Compaction Signal-Parser (#12): `chat.message` Hook, parst no_compact/compact_soon/compact_now Signale
+- Heuristic Pruning Engine (#14): Tool-Logs truncaten, Duplikate dedupen, completed Issues verdichten
+- Compaction State (#14): Signal-Tracking, applied-Blocks, History
+- session.compacting Hook (#15): Compaction-Kontext + Prompt für LLM-gesteuerte Kompaktierung
+- Compaction Diary (#16): JSONL pro Session-Tag mit Reduktions-Statistiken
+- tbg-Integration (#15): `CC_COMPACTION_TRIGGER` Env-Variable
+- Tests: 13 pruning tests + 3 integration tests (35 total)
+
+### Changed
+- `experimental.chat.system.transform`: Pruning-Engine nach Layer-Pipeline integriert
+
 ## v0.5.1 — 2026-05-31
 
 ### Fixed

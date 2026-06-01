@@ -1,5 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { DEFAULT_LAYERS, type Layer } from "./layers.js";
+import { getCompactionState } from "./compaction/state.js";
 import { createHookContext, runLayerPipeline } from "./hook.js";
 import { sanitizeLayerContent } from "./sanitize.js";
 import { CorePrefixLayer } from "./layers/core-prefix.js";
@@ -42,6 +43,58 @@ export const FourContextCuratorPlugin: Plugin = async (_ctx) => {
       output.system.push(createCompactionInstruction());
     },
     "chat.message": createCompactionSignalHook(),
+    "experimental.session.compacting": async (input, output) => {
+      try {
+        const state = getCompactionState();
+        const signal = state.lastSignal;
+        const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
+
+        if (!triggered && (!signal || signal.advice === "no_compact")) {
+          return;
+        }
+
+        // Provide context for the compacting LLM
+        if (signal && signal.safeToCompact.length > 0) {
+          output.context.push(
+            `Compaction advice: ${signal.advice} — ${signal.reason}`,
+            `Safe to compact: ${signal.safeToCompact.join(", ")}`,
+          );
+        }
+
+        // Custom compaction prompt when compaction is explicitly wanted
+        if (triggered || signal?.advice === "compact_now") {
+          const lines: string[] = [
+            "You are compacting an AI coding assistant session.",
+            "PRIORITY ORDER (preserve first, condense later):",
+            "1. Active task context and current issue details — KEEP INTACT",
+            "2. User instructions and architectural decisions — KEEP INTACT",
+            "3. Recent tool outputs (last 5 turns) — KEEP",
+            "4. Completed issue resolutions — CONDENSE to 1-line summary",
+            "5. Duplicate tool outputs — REMOVE, reference first occurrence",
+            "6. Tool logs >50 lines — TRUNCATE to header+footer with '… [N lines truncated] …'",
+          ];
+          if (signal) {
+            lines.push(`Signal: ${signal.advice} — ${signal.reason}`);
+          }
+          if (signal?.safeToCompact.length) {
+            lines.push(`Completed blocks: ${signal.safeToCompact.join(", ")}`);
+          }
+          output.prompt = lines.join("\n");
+        }
+
+        // Clean up trigger env after handling
+        if (triggered) {
+          delete process.env.CC_COMPACTION_TRIGGER;
+        }
+
+        // eslint-disable-next-line no-console
+        console.error(
+          `[four-cc:compaction] session.compacting: tbg=${triggered}, signal=${signal?.advice ?? "none"}`,
+        );
+      } catch {
+        // Non-blocking — never throw from hook
+      }
+    },
   };
 };
 

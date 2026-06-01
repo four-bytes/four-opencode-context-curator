@@ -5,6 +5,7 @@ import {
   wasApplied,
   addEvent,
 } from "./state.js";
+import { writeDiaryEntry } from "./diary.js";
 
 export interface PruningConfig {
   /** Max lines before truncation kicks in */
@@ -178,6 +179,27 @@ export function applyPruning(
     advice: signal.advice,
     reason: signal.reason,
     blocksCondensed: stats.blocksCondensed,
+  });
+
+  // Write diary entry
+  const reductionPct =
+    stats.originalLines > 0
+      ? Math.round(
+          ((stats.originalLines - stats.prunedLines) / stats.originalLines) * 100,
+        )
+      : 0;
+
+  writeDiaryEntry({
+    ts: Date.now(),
+    advice: signal.advice,
+    reason: signal.reason,
+    blocksCondensed: stats.blocksCondensed,
+    duplicatesRemoved: stats.duplicatesRemoved,
+    linesBefore: stats.originalLines,
+    linesAfter: stats.prunedLines,
+    reductionPct,
+    sessionId: process.env.OPENDOC_SESSION_ID || "unknown",
+    triggered: process.env.CC_COMPACTION_TRIGGER === "true",
   });
 
   // eslint-disable-next-line no-console
