@@ -48,7 +48,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         signal.safeToCompact.length > 0 &&
         sessionID
       ) {
-// Trigger compaction immediately via setTimeout to avoid deadlock
+        // Trigger compaction immediately via setTimeout to avoid deadlock
         const sid = sessionID;
         const reason = signal.reason;
         const blocks = signal.safeToCompact.length;
@@ -75,29 +75,39 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         setTimeout(() => {
           try {
             // eslint-disable-next-line no-console
-            console.error(
-              `\n⚠️  COMPACTION TRIGGERED ⚠️`,
-            );
+            console.error(`\n⚠️  COMPACTION TRIGGERED ⚠️`);
             // eslint-disable-next-line no-console
             console.error(
               `[four-cc:compaction] compact_now → session ${sid}: ${reason} (${blocks} blocks)`,
             );
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (ctx.client as any).v2?.session
-              ?.compact({ sessionID: sid })
-              .then(() => {
-                // eslint-disable-next-line no-console
-                console.error(`[four-cc:compaction] ✅ compact() API called successfully`);
-              })
-              .catch((err: unknown) => {
-                // eslint-disable-next-line no-console
-                console.error(`[four-cc:compaction] ❌ compact API call failed:`, err);
-              });
+            const client = ctx.client as any;
+            // eslint-disable-next-line no-console
+            console.error(`[four-cc:compaction] client keys: ${Object.keys(client || {}).join(", ")}`);
+            if (client?.v2?.session?.compact) {
+              client.v2.session.compact({ sessionID: sid })
+                .then(() => {
+                  // eslint-disable-next-line no-console
+                  console.error(`[four-cc:compaction] ✅ compact() API called successfully`);
+                })
+                .catch((err: unknown) => {
+                  // eslint-disable-next-line no-console
+                  console.error(`[four-cc:compaction] ❌ compact API call failed:`, err);
+                });
+            } else {
+              // eslint-disable-next-line no-console
+              console.error(`[four-cc:compaction] ❌ client.v2.session.compact NOT available. Client type:`, typeof client);
+            }
           } catch (err) {
             // eslint-disable-next-line no-console
             console.error(`[four-cc:compaction] ❌ compact trigger failed:`, err);
           }
         }, 100);
+      } else {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[four-cc:compaction] trigger SKIPPED: advice=${signal.advice} blocks=${signal.safeToCompact.length} sessionID="${sessionID}"`,
+        );
       }
     }),
     "experimental.session.compacting": async (input, output) => {
