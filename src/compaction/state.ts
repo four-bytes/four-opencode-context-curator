@@ -7,12 +7,18 @@ export interface CompactionEvent {
   blocksCondensed: number;
 }
 
+export interface LastUserModel {
+  providerID: string | undefined;
+  modelID: string | undefined;
+}
+
 export interface CompactionState {
   lastSignal: CompactionSignal | null;
   appliedFor: Set<string>;
   appliedForPruning: Set<string>;
   appliedForMessages: Set<string>;
   history: CompactionEvent[];
+  lastUserModel: LastUserModel;
 }
 
 const state: CompactionState = {
@@ -21,6 +27,7 @@ const state: CompactionState = {
   appliedForPruning: new Set(),
   appliedForMessages: new Set(),
   history: [],
+  lastUserModel: { providerID: undefined, modelID: undefined },
 };
 
 export function getCompactionState(): CompactionState {
@@ -68,4 +75,12 @@ export function clearTransformState(): void {
 
 export function addEvent(event: CompactionEvent): void {
   state.history.push(event);
+}
+
+export function setLastUserModel(providerID: string | undefined, modelID: string | undefined): void {
+  state.lastUserModel = { providerID, modelID };
+}
+
+export function getLastUserModel(): LastUserModel {
+  return state.lastUserModel;
 }
