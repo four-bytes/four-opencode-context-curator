@@ -2,18 +2,13 @@ import { test, expect } from "bun:test";
 import { triggerCompaction } from "../src/compaction/trigger.js";
 import { clearSignal } from "../src/compaction/state.js";
 
-const origProviderID = process.env.CC_COMPACTION_PROVIDER_ID;
-const origModelID = process.env.CC_COMPACTION_MODEL_ID;
-
-test("calls session.summarize when available with env vars", async () => {
-  process.env.CC_COMPACTION_PROVIDER_ID = "test-provider";
-  process.env.CC_COMPACTION_MODEL_ID = "test-model";
+test("calls session.compact when available", async () => {
   let callCount = 0;
   let calledWith: unknown = undefined;
 
   const client = {
     session: {
-      summarize: async (args: unknown) => {
+      compact: async (args: unknown) => {
         callCount++;
         calledWith = args;
       },
@@ -23,10 +18,7 @@ test("calls session.summarize when available with env vars", async () => {
   const result = await triggerCompaction(client, "sid1");
   expect(result).toBe(true);
   expect(callCount).toBe(1);
-  expect(calledWith).toEqual({
-    body: { providerID: "test-provider", modelID: "test-model" },
-    path: { id: "sid1" },
-  });
+  expect(calledWith).toEqual({ sessionID: "sid1" });
 });
 
 test("returns false for empty client", async () => {
@@ -37,7 +29,7 @@ test("returns false for empty client", async () => {
 test("returns false for missing sessionID", async () => {
   const client = {
     session: {
-      summarize: async () => {},
+      compact: async () => {},
     },
   };
   const result = await triggerCompaction(client, "");
@@ -45,12 +37,9 @@ test("returns false for missing sessionID", async () => {
 });
 
 test("does not throw when method rejects", async () => {
-  process.env.CC_COMPACTION_PROVIDER_ID = "test-provider";
-  process.env.CC_COMPACTION_MODEL_ID = "test-model";
-
   const client = {
     session: {
-      summarize: async (_args: unknown) => {
+      compact: async (_args: unknown) => {
         throw new Error("Netzwerkfehler");
       },
     },
@@ -65,19 +54,16 @@ test("does not throw when method rejects", async () => {
   }
 
   expect(threw).toBe(false);
-  // summarize wirft → zählt als gescheitert → Kandidaten durch → false
+  // compact wirft → zählt als gescheitert → Kandidaten durch → false
   expect(result).toBe(false);
 });
 
-test("calls summarize without body when env vars are missing", async () => {
-  delete process.env.CC_COMPACTION_PROVIDER_ID;
-  delete process.env.CC_COMPACTION_MODEL_ID;
-
+test("calls compact with sessionID only", async () => {
   let callCount = 0;
   let calledWith: unknown = undefined;
   const client = {
     session: {
-      summarize: async (args: unknown) => {
+      compact: async (args: unknown) => {
         callCount++;
         calledWith = args;
       },
@@ -86,7 +72,7 @@ test("calls summarize without body when env vars are missing", async () => {
 
   const result = await triggerCompaction(client, "sid3");
   expect(callCount).toBe(1);
-  expect(calledWith).toEqual({ path: { id: "sid3" } });
+  expect(calledWith).toEqual({ sessionID: "sid3" });
   expect(result).toBe(true);
 });
 
