@@ -9,7 +9,7 @@ import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
 import { createCompactionSignalHook, stripCompactionSignal } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
-import { getCompactionState, clearSignal, setLastUserModel } from "./compaction/state.js";
+import { getCompactionState, clearSignal, setLastUserModel, canTriggerCompaction } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
 import { triggerCompaction } from "./compaction/trigger.js";
 import { logDebugEvent } from "./debug-logger.js";
@@ -84,7 +84,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       } catch {}
 
       // Only trigger actual compaction for compact_now with a valid session
-      if (signal.advice === "compact_now" && sessionID) {
+      if (signal.advice === "compact_now" && sessionID && canTriggerCompaction(5000)) {
         const sid = sessionID;
         const serverUrlStr = ctx.serverUrl?.toString();
         if (!serverUrlStr) {
