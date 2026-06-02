@@ -84,3 +84,12 @@ export function setLastUserModel(providerID: string | undefined, modelID: string
 export function getLastUserModel(): LastUserModel {
   return state.lastUserModel;
 }
+
+let lastTriggeredAt = 0;
+
+export function canTriggerCompaction(cooldownMs: number = 5000): boolean {
+  const now = Date.now();
+  if (now - lastTriggeredAt < cooldownMs) return false;
+  lastTriggeredAt = now;
+  return true;
+}
