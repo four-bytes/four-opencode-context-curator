@@ -1,75 +1,50 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, spyOn } from "bun:test";
-import { existsSync, readFileSync, rmSync, mkdtempSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import * as fs from "node:fs";
 
 describe("Debug Logger", () => {
-  const originalDebug = process.env.CC_DEBUG;
+  let fsAppendSpy: ReturnType<typeof spyOn>;
+  let fsExistsSpy: ReturnType<typeof spyOn>;
+  let fsMkdirSpy: ReturnType<typeof spyOn>;
   let logDebugEvent: (type: string, payload: Record<string, unknown>) => void;
-  let tmpDir: string;
-  let homedirSpy: ReturnType<typeof spyOn>;
 
-  beforeAll(async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), "cc-debug-test-"));
-    homedirSpy = spyOn(await import("node:os"), "homedir").mockReturnValue(tmpDir);
+  beforeEach(async () => {
+    fsAppendSpy = spyOn(fs, "appendFileSync").mockImplementation(() => {});
+    fsExistsSpy = spyOn(fs, "existsSync").mockReturnValue(true);
+    fsMkdirSpy = spyOn(fs, "mkdirSync").mockImplementation(() => {});
+
+    delete process.env.CC_DEBUG;
     const mod = await import("../src/debug-logger");
     logDebugEvent = mod.logDebugEvent;
   });
 
-  afterAll(() => {
-    homedirSpy?.mockRestore();
-    if (originalDebug !== undefined) {
-      process.env.CC_DEBUG = originalDebug;
-    } else {
-      delete process.env.CC_DEBUG;
-    }
-    rmSync(tmpDir, { recursive: true, force: true });
-  });
-
   afterEach(() => {
-    // Reset CC_DEBUG to original between tests
-    if (originalDebug !== undefined) {
-      process.env.CC_DEBUG = originalDebug;
-    } else {
-      delete process.env.CC_DEBUG;
-    }
+    fsAppendSpy?.mockRestore();
+    fsExistsSpy?.mockRestore();
+    fsMkdirSpy?.mockRestore();
+    delete process.env.CC_DEBUG;
   });
 
   it("is no-op when CC_DEBUG is not set", () => {
-    delete process.env.CC_DEBUG;
     logDebugEvent("test.event", { foo: "bar" });
 
-    const cacheDir = join(
-      tmpDir,
-      ".cache",
-      "opencode",
-      "four-opencode-context-curator",
-    );
-    expect(existsSync(cacheDir)).toBe(false);
+    expect(fsAppendSpy).not.toHaveBeenCalled();
+    expect(fsMkdirSpy).not.toHaveBeenCalled();
   });
 
   it("writes JSONL line with correct fields when CC_DEBUG=true", () => {
     process.env.CC_DEBUG = "true";
-    const testType = "test.event";
-    const testPayload = { foo: "bar", num: 42 };
-    logDebugEvent(testType, testPayload);
+    logDebugEvent("test.event", { foo: "bar", num: 42 });
 
-    const date = new Date().toISOString().split("T")[0];
-    const logPath = join(
-      tmpDir,
-      ".cache",
-      "opencode",
-      "four-opencode-context-curator",
-      `debug-${date}.jsonl`,
+    expect(fsAppendSpy).toHaveBeenCalledTimes(1);
+
+    const [pathArg, contentArg] = fsAppendSpy.mock.calls[0];
+
+    expect(pathArg).toMatch(
+      /four-opencode-context-curator\/debug-\d{4}-\d{2}-\d{2}\.jsonl$/,
     );
 
-    expect(existsSync(logPath)).toBe(true);
-    const content = readFileSync(logPath, "utf-8").trim();
-    const lines = content.split("\n");
-    expect(lines.length).toBeGreaterThanOrEqual(1);
-
-    const parsed = JSON.parse(lines[0]);
-    expect(parsed.type).toBe(testType);
+    const parsed = JSON.parse((contentArg as string).trim());
+    expect(parsed.type).toBe("test.event");
     expect(parsed.foo).toBe("bar");
     expect(parsed.num).toBe(42);
     expect(typeof parsed.ts).toBe("number");

@@ -1,5 +1,5 @@
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import { join } from "node:path";
 
 export interface DebugEvent {
@@ -9,7 +9,7 @@ export interface DebugEvent {
 }
 
 function getCacheDir(): string {
-  return join(homedir(), ".cache", "opencode", "four-opencode-context-curator");
+  return join(os.homedir(), ".cache", "opencode", "four-opencode-context-curator");
 }
 
 function getLogPath(): string {
@@ -19,8 +19,8 @@ function getLogPath(): string {
 
 function ensureDir(): void {
   const dir = getCacheDir();
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
 }
 
@@ -38,7 +38,7 @@ export function logDebugEvent(
     ensureDir();
     const event: DebugEvent = { ts: Date.now(), type, ...payload };
     const line = JSON.stringify(event) + "\n";
-    appendFileSync(getLogPath(), line, "utf-8");
+    fs.appendFileSync(getLogPath(), line, "utf-8");
   } catch {
     // Silent — never throw from debug logger
   }
