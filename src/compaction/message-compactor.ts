@@ -1,5 +1,6 @@
 import { getCompactionState, clearSignal, markApplied, wasApplied, addEvent } from "./state.js";
 import { writeDiaryEntry } from "./diary.js";
+import { logDebugEvent } from "../debug-logger.js";
 
 export interface Part {
   type: string;
@@ -173,13 +174,19 @@ export function compactMessageHistory(messages: MessageItem[]): CompactionResult
     triggered: process.env.CC_COMPACTION_TRIGGER === "true",
   });
 
-  // eslint-disable-next-line no-console
-  console.warn(
-    `[four-cc:compaction] messages.transform: ${messagesBefore}→${messagesAfter} msgs ` +
-      `(${removed} dropped), ${charsBefore}→${charsAfter} chars ` +
-      `(${reductionPct}% reduction, ${truncations} trunc, ${duplicates} dups) — ${signal.advice}: ${signal.reason} ` +
-      `[session: ${sessionId}]`,
-  );
+  logDebugEvent("compaction.applied", {
+    messagesBefore,
+    messagesAfter,
+    removed,
+    charsBefore,
+    charsAfter,
+    reductionPct,
+    truncations,
+    duplicates,
+    advice: signal.advice,
+    reason: signal.reason,
+    sessionId,
+  });
 
   clearSignal();
 
