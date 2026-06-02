@@ -23,7 +23,7 @@ test("calls session.summarize when available with env vars", async () => {
   expect(result).toBe(true);
   expect(callCount).toBe(1);
   expect(calledWith).toEqual({
-    body: { providerID: "test-provider", modelID: "test-model", auto: true },
+    body: { providerID: "test-provider", modelID: "test-model" },
     path: { id: "sid1" },
   });
 });
@@ -68,23 +68,25 @@ test("does not throw when method rejects", async () => {
   expect(result).toBe(false);
 });
 
-test("skips summarize when env vars are missing", async () => {
+test("calls summarize without body when env vars are missing", async () => {
   delete process.env.CC_COMPACTION_PROVIDER_ID;
   delete process.env.CC_COMPACTION_MODEL_ID;
 
-  let summarizeCalled = false;
+  let callCount = 0;
+  let calledWith: unknown = undefined;
   const client = {
     session: {
-      summarize: async () => {
-        summarizeCalled = true;
+      summarize: async (args: unknown) => {
+        callCount++;
+        calledWith = args;
       },
     },
   };
 
   const result = await triggerCompaction(client, "sid3");
-  expect(summarizeCalled).toBe(false);
-  // kein HTTP serverUrl, kein CC_COMPACTION_COMMAND → false
-  expect(result).toBe(false);
+  expect(callCount).toBe(1);
+  expect(calledWith).toEqual({ path: { id: "sid3" } });
+  expect(result).toBe(true);
 });
 
 test("returns false for null client", async () => {
