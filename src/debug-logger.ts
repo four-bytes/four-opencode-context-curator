@@ -8,16 +8,19 @@ export interface DebugEvent {
   [key: string]: unknown;
 }
 
-const CACHE_DIR = join(homedir(), ".cache", "opencode", "four-opencode-context-curator");
+function getCacheDir(): string {
+  return join(homedir(), ".cache", "opencode", "four-opencode-context-curator");
+}
 
 function getLogPath(): string {
   const date = new Date().toISOString().split("T")[0];
-  return join(CACHE_DIR, `debug-${date}.jsonl`);
+  return join(getCacheDir(), `debug-${date}.jsonl`);
 }
 
 function ensureDir(): void {
-  if (!existsSync(CACHE_DIR)) {
-    mkdirSync(CACHE_DIR, { recursive: true });
+  const dir = getCacheDir();
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
   }
 }
 
