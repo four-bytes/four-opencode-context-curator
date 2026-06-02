@@ -1,5 +1,9 @@
 # Project Change History
 
+## v0.3.5 (2026-06-02)
+### Changed
+- Startup log on plugin init: stderr line `[four-opencode-context-curator] v<version> loaded (pid=..., CC_DEBUG=...)` plus `compaction.plugin.loaded` debug event (#67)
+
 ## v0.3.4 — 2026-06-02
 
 ### Fixed
