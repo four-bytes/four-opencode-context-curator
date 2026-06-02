@@ -91,7 +91,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         process.env.CC_COMPACTION_TRIGGER = "true";
 
         logDebugEvent("compaction.compacting", {
-          triggered: triggered || true, // now always true after we set it above
+          triggered: true,
           advice: signal?.advice ?? "none",
         });
 
@@ -154,11 +154,11 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
 
         // Clear signal after both transforms have had their chance
         clearSignal();
-
-        // Clean up trigger flag after both transforms have run
-        delete process.env.CC_COMPACTION_TRIGGER;
       } catch {
         // Non-blocking
+      } finally {
+        // Clean up trigger flag after both transforms have run
+        delete process.env.CC_COMPACTION_TRIGGER;
       }
     },
   };

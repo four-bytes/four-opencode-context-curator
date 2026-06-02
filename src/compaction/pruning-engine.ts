@@ -131,20 +131,17 @@ export function applyPruning(
   // Guard: no signal, no_compact, or not enough blocks → no-op
   // UNLESS CC_COMPACTION_TRIGGER is set → apply generic heuristics
   const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
-  if (
-    !triggered &&
-    (!signal ||
-    signal.advice === "no_compact" ||
-    signal.safeToCompact.length < config.minCompletedBlocks)
-  ) {
-    stats.prunedLines = stats.originalLines;
-    return { contents: layerContents, stats };
+  if (!triggered) {
+    if (!signal || signal.advice === "no_compact" || signal.safeToCompact.length < config.minCompletedBlocks) {
+      stats.prunedLines = stats.originalLines;
+      return { contents: layerContents, stats };
+    }
   }
 
-  // Guard: already applied for all requested blocks (skip when trigger-only)
-  if (!triggered) {
+  // Guard: already applied for all requested blocks (skip if trigger-only, no signal)
+  if (signal) {
     const newBlocks = signal.safeToCompact.filter((b) => !wasAppliedPruning(b));
-    if (newBlocks.length === 0) {
+    if (newBlocks.length === 0 && !triggered) {
       stats.prunedLines = stats.originalLines;
       return { contents: layerContents, stats };
     }

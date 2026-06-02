@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "bun:test";
 import { applyPruning } from "../src/compaction/pruning-engine.js";
 import { setLastSignal, clearSignal, getCompactionState } from "../src/compaction/state.js";
 import { writeDiaryEntry } from "../src/compaction/diary.js";
+import { compactMessageHistory } from "../src/compaction/message-compactor.js";
 import { createCompactionSignalHook, type CompactionSignal } from "../src/compaction/signal-parser.js";
 import { existsSync, readFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -154,5 +155,26 @@ describe("Compaction Integration", () => {
       const content = readFileSync(diaryPath, "utf-8");
       expect(content.trim()).toBe(""); // should be empty since no write happened
     }
+  });
+
+  it("trigger-only compactMessageHistory applies generic heuristics", async () => {
+    process.env.CC_COMPACTION_TRIGGER = "true";
+    clearSignal();
+
+    const messages = [
+      { info: { role: "user" }, parts: [{ type: "text", text: "hello" }] },
+      { info: { role: "assistant" }, parts: [{ type: "text", text: "hi there" }] },
+      { info: { role: "user" }, parts: [{ type: "text", text: Array(80).fill("log").join("\n") }] },
+    ];
+
+    const result = compactMessageHistory(messages);
+
+    // Should have applied (triggered=true)
+    expect(result.applied).toBe(true);
+    // Should have reduced chars (long message truncated)
+    expect(result.charsAfter).toBeLessThan(result.charsBefore);
+
+    delete process.env.CC_COMPACTION_TRIGGER;
+    clearSignal();
   });
 });

@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import { triggerCompaction } from "../src/compaction/trigger.js";
+import { clearSignal } from "../src/compaction/state.js";
 
 const origProviderID = process.env.CC_COMPACTION_PROVIDER_ID;
 const origModelID = process.env.CC_COMPACTION_MODEL_ID;
@@ -92,4 +93,28 @@ test("calls summarize without body when env vars are missing", async () => {
 test("returns false for null client", async () => {
   const result = await triggerCompaction(null, "sid5");
   expect(result).toBe(false);
+});
+
+test("trigger-only mode (no signal) applies generic pruning", async () => {
+  // Set trigger but no signal
+  process.env.CC_COMPACTION_TRIGGER = "true";
+  clearSignal();
+
+  const { applyPruning } = await import("../src/compaction/pruning-engine.js");
+  const longText = Array(100).fill("repeated debug line").join("\n");
+  const input = [
+    "Some normal content",
+    longText,
+  ];
+
+  const originalLines = input.reduce((sum, c) => sum + c.split("\n").length, 0);
+  const { contents, stats } = applyPruning(input);
+
+  // Should have applied truncation (longText > 50 lines)
+  expect(stats.prunedLines).toBeLessThan(originalLines);
+  // Should NOT have condensed issues (no signal → no safe_to_compact)
+  expect(contents.some((c: string) => c.includes("COMPLETED"))).toBe(false);
+
+  delete process.env.CC_COMPACTION_TRIGGER;
+  clearSignal();
 });
