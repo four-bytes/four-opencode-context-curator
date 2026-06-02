@@ -1,8 +1,10 @@
 /**
- * Aktiver Compaction-Trigger: ruft den opencode compact-Endpoint via SDK client.session.compact() auf.
- * HTTP-Fallback und CC_COMPACTION_COMMAND als weitere Fallbacks.
+ * Aktiver Compaction-Trigger: ruft den opencode compact-Endpoint via SDK client.v2.session.compact() auf.
+ * Fallback: client.session.compact() (legacy SDK), HTTP POST, CC_COMPACTION_COMMAND.
  * NIE werfen — alle Fehler werden geschluckt.
  */
+
+import { logDebugEvent } from "../debug-logger.js";
 
 type AnyFn = (...args: unknown[]) => unknown;
 
@@ -29,21 +31,36 @@ export async function triggerCompaction(
   const c = client as Record<string, unknown>;
 
   // Kandidaten als async-Closures
-  const candidates: Array<() => Promise<boolean>> = [
-    // 1. client.session.compact({ sessionID })
-    // Uses opencode's SDK method — no env vars needed for model selection.
-    async () => {
-      const compact = (c["session"] as Record<string, unknown> | undefined)?.["compact"];
-      if (!isFn(compact)) return false;
-      return tryCall(compact.bind(c["session"]), { sessionID });
+  const candidates: Array<{ name: string; fn: () => Promise<boolean> }> = [
+    // #1 client.v2.session.compact({ sessionID }) — primary SDK path
+    {
+      name: "v2.session.compact",
+      fn: async () => {
+        const v2 = c["v2"] as Record<string, unknown> | undefined;
+        const compact = (v2?.["session"] as Record<string, unknown> | undefined)?.["compact"];
+        if (!isFn(compact)) return false;
+        const parent = v2?.["session"] as Record<string, unknown> | undefined;
+        return tryCall(compact.bind(parent), { sessionID });
+      },
+    },
+    // #2 client.session.compact({ sessionID }) — legacy fallback
+    {
+      name: "session.compact",
+      fn: async () => {
+        const compact = (c["session"] as Record<string, unknown> | undefined)?.["compact"];
+        if (!isFn(compact)) return false;
+        return tryCall(compact.bind(c["session"]), { sessionID });
+      },
     },
   ];
 
-  for (const candidate of candidates) {
+  for (const { name, fn } of candidates) {
     try {
-      const ok = await candidate();
+      const ok = await fn();
+      logDebugEvent("compaction.trigger.candidate", { name, ok });
       if (ok) return true;
     } catch {
+      logDebugEvent("compaction.trigger.candidate", { name, ok: false });
       // weiter
     }
   }
@@ -53,10 +70,17 @@ export async function triggerCompaction(
     try {
       const url = `${serverUrl.replace(/\/+$/, "")}/api/session/${encodeURIComponent(sessionID)}/compact`;
       const response = await fetch(url, { method: "POST" });
+      logDebugEvent("compaction.trigger.http", {
+        url,
+        status: response.status,
+        ok: response.ok,
+      });
       if (response.ok) return true;
     } catch {
       // fall through
     }
+  } else {
+    logDebugEvent("compaction.trigger.http.skipped", { reason: "no serverUrl" });
   }
 
   // Fallback: CC_COMPACTION_COMMAND env var
@@ -70,6 +94,7 @@ export async function triggerCompaction(
       stderr: "pipe",
     });
     const exitCode = await proc.exited;
+    logDebugEvent("compaction.trigger.cmd", { ok: exitCode === 0, exitCode });
     return exitCode === 0;
   } catch {
     return false;

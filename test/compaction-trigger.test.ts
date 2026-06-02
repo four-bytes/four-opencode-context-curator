@@ -81,6 +81,35 @@ test("returns false for null client", async () => {
   expect(result).toBe(false);
 });
 
+test("calls v2.session.compact as primary candidate", async () => {
+  let v2CallCount = 0;
+  let sessionCallCount = 0;
+  let v2CalledWith: unknown = undefined;
+
+  const client = {
+    v2: {
+      session: {
+        compact: async (args: unknown) => {
+          v2CallCount++;
+          v2CalledWith = args;
+        },
+      },
+    },
+    session: {
+      compact: async () => {
+        sessionCallCount++;
+      },
+    },
+  };
+
+  const result = await triggerCompaction(client, "sid-v2");
+  expect(result).toBe(true);
+  expect(v2CallCount).toBe(1);
+  expect(v2CalledWith).toEqual({ sessionID: "sid-v2" });
+  // legacy fallback should NOT be called since v2 succeeds
+  expect(sessionCallCount).toBe(0);
+});
+
 test("trigger-only mode (no signal) applies generic pruning", async () => {
   // Set trigger but no signal
   process.env.CC_COMPACTION_TRIGGER = "true";

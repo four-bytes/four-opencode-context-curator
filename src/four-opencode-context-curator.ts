@@ -68,7 +68,13 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       // Only trigger actual compaction for compact_now with a valid session
       if (signal.advice === "compact_now" && sessionID) {
         const sid = sessionID;
-        triggerCompaction(ctx.client, sid, ctx.serverUrl?.toString()).then((found) => {
+        const serverUrlStr = ctx.serverUrl?.toString();
+        if (!serverUrlStr) {
+          logDebugEvent("compaction.trigger.serverUrl.missing", {});
+        } else {
+          logDebugEvent("compaction.trigger.serverUrl.present", { serverUrl: serverUrlStr });
+        }
+        triggerCompaction(ctx.client, sid, serverUrlStr).then((found) => {
           logDebugEvent("compaction.trigger.invoked", { sessionID: sid, found });
         }).catch(() => {});
 
