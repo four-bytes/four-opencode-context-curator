@@ -10,7 +10,7 @@ export function parseCompactionSignal(text: string): CompactionSignal | null {
   const adviceMatch = text.match(/compaction_advice:\s*(no_compact|compact_soon|compact_now)/i);
   if (!adviceMatch) return null;
 
-n  // Guard: signal block must be at/near end of text (not mid-echo from file reads)
+const n = text.length;  // Guard: signal block must be at/near end of text (not mid-echo from file reads)
   if (adviceMatch.index !== undefined && adviceMatch.index < text.length - Math.max(300, Math.ceil(text.length * 0.2))) return null;
   const adviceRaw = adviceMatch[1].toLowerCase();
   if (adviceRaw !== "no_compact" && adviceRaw !== "compact_soon" && adviceRaw !== "compact_now") {
