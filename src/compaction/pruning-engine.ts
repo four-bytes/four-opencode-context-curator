@@ -129,20 +129,25 @@ export function applyPruning(
   };
 
   // Guard: no signal, no_compact, or not enough blocks → no-op
+  // UNLESS CC_COMPACTION_TRIGGER is set → apply generic heuristics
+  const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
   if (
-    !signal ||
+    !triggered &&
+    (!signal ||
     signal.advice === "no_compact" ||
-    signal.safeToCompact.length < config.minCompletedBlocks
+    signal.safeToCompact.length < config.minCompletedBlocks)
   ) {
     stats.prunedLines = stats.originalLines;
     return { contents: layerContents, stats };
   }
 
-  // Guard: already applied for all requested blocks
-  const newBlocks = signal.safeToCompact.filter((b) => !wasAppliedPruning(b));
-  if (newBlocks.length === 0) {
-    stats.prunedLines = stats.originalLines;
-    return { contents: layerContents, stats };
+  // Guard: already applied for all requested blocks (skip when trigger-only)
+  if (!triggered) {
+    const newBlocks = signal.safeToCompact.filter((b) => !wasAppliedPruning(b));
+    if (newBlocks.length === 0) {
+      stats.prunedLines = stats.originalLines;
+      return { contents: layerContents, stats };
+    }
   }
 
   // Step 1: Truncate long tool outputs
@@ -155,9 +160,10 @@ export function applyPruning(
     deduplicateToolOutputs(truncated);
   stats.duplicatesRemoved = duplicatesRemoved;
 
-  // Step 3: Condense completed issue slices
+  // Step 3: Condense completed issue slices (skip if no signal — trigger-only mode)
+  const safeToCompact = signal?.safeToCompact ?? [];
   const condensed = deduped.map((c) => {
-    const condensedContent = condenseIssueSlice(c, signal.safeToCompact);
+    const condensedContent = condenseIssueSlice(c, safeToCompact);
     if (condensedContent !== c) stats.blocksCondensed++;
     return condensedContent;
   });
@@ -167,16 +173,18 @@ export function applyPruning(
     0,
   );
 
-  // Mark all safe_to_compact blocks as applied
-  for (const block of signal.safeToCompact) {
-    markAppliedPruning(block);
+  // Mark all safe_to_compact blocks as applied (skip if trigger-only)
+  if (signal) {
+    for (const block of safeToCompact) {
+      markAppliedPruning(block);
+    }
   }
 
   // Record event
   addEvent({
     ts: Date.now(),
-    advice: signal.advice,
-    reason: signal.reason,
+    advice: signal?.advice ?? "triggered",
+    reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
     blocksCondensed: stats.blocksCondensed,
   });
 
@@ -190,8 +198,8 @@ export function applyPruning(
 
   writeDiaryEntry({
     ts: Date.now(),
-    advice: signal.advice,
-    reason: signal.reason,
+    advice: signal?.advice ?? "triggered",
+    reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
     blocksCondensed: stats.blocksCondensed,
     duplicatesRemoved: stats.duplicatesRemoved,
     linesBefore: stats.originalLines,
@@ -204,7 +212,7 @@ export function applyPruning(
   // eslint-disable-next-line no-console
   console.warn(
     `[four-cc:pruning] COMPACTED: ${stats.originalLines}→${stats.prunedLines} lines ` +
-      `(${stats.blocksCondensed} blocks, ${stats.duplicatesRemoved} dups) — ${signal.reason}`,
+      `(${stats.blocksCondensed} blocks, ${stats.duplicatesRemoved} dups) — ${signal?.reason ?? "triggered"}`,
   );
 
   return { contents: condensed, stats };
