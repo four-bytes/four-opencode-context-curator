@@ -1,5 +1,21 @@
 # Project Change History
 
+## v0.3.2 — 2026-06-02
+
+### Added
+- Compaction Signals JSONL-Logging: Alle Signale werden ins JSONL-Diary geschrieben, rote console.error entfernt (#43, #44)
+
+### Fixed
+- Compaction Signal aus sichtbarer Ausgabe entfernt + `CC_COMPACTION_COMMAND` Env-Fallback (#45, #46)
+- triggerCompaction verwendet `client.session.summarize()` mit HTTP-Fallback (#47, #48)
+- message-compactor.ts Aktualisierung (#41)
+- Per-Transform-Tracking verhindert Signal-Race zwischen applyPruning und compactMessageHistory (#49, #52)
+- triggerCompaction: `summarize()` ohne Env-Vars möglich, body optional (#50, #53)
+- session.compacting setzt `CC_COMPACTION_TRIGGER`, transforms wenden generisches Pruning im Trigger-Only-Modus an (#51, #54)
+- Event Hook in opencode Manifest registriert (#39, #42)
+- Compaction Signal wird via Event Hook statt chat.message verarbeitet (#39, #40)
+- Toter `extractText` Helper in message-compactor entfernt (#41, #55)
+
 ## v0.10.0 — 2026-06-01
 
 ### Added
@@ -91,21 +107,25 @@
 - Cache via repo-path-hash + file-mtime
 - Tests: 2 Cases
 
+## v0.3.1 — 2026-05-31
+
+### Fixed
+- DOM-Lib wiederhergestellt für `@opencode-ai/plugin` HeadersInit Typ-Kompatibilität
+
 ## v0.3.0 — 2026-05-31
 
 ### Added
-- core_prefix Layer (Issue #3): Statische Global Rules (Stop-Mode, Search, Quality Gates)
-- Layer-Datei: src/layers/core-prefix.ts mit CorePrefixLayer-Klasse
+- core_prefix Layer: Statische Global Rules (Stop-Mode, Search, Quality Gates) (#3, #8)
+- `src/layers/core-prefix.ts`: CorePrefixLayer-Klasse
 - Tests: 2 Cases (static content, source reference)
 
 ## v0.2.0 — 2026-05-31
 
 ### Added
-- Layered Cacheable Prefix Architecture (Issue #2, Wave P4a)
-- Type-System: src/layers.ts — LayerConfig, LayerContent, Layer
-- Pipeline: src/hook.ts — createHookContext, runLayerPipeline mit TTL-Cache
-- Plugin-Entry: experimental.chat.system.transform Hook registriert
-- Layer-Implementations folgen in #3 (core_prefix), #4 (repo_profile), #5 (task_slice + issue_slice)
+- Layered Cacheable Prefix Architecture: Hook-System, Pipeline mit TTL-Cache und Layer-Typen (#2, #7)
+- `src/layers.ts`: LayerConfig, LayerContent, Layer Interfaces
+- `src/hook.ts`: createHookContext, runLayerPipeline
+- Plugin-Entry registriert `experimental.chat.system.transform` Hook
 
 ## v0.1.0 — 2026-05-31
 
