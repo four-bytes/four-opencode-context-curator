@@ -1,6 +1,5 @@
 /**
- * Aktiver Compaction-Trigger: ruft den opencode compact-Endpoint via SDK summarize() auf.
- * CC_COMPACTION_PROVIDER_ID / CC_COMPACTION_MODEL_ID optional — ohne Env-Vars nutzt opencode sein Default-Compact-Model.
+ * Aktiver Compaction-Trigger: ruft den opencode compact-Endpoint via SDK client.session.compact() auf.
  * HTTP-Fallback und CC_COMPACTION_COMMAND als weitere Fallbacks.
  * NIE werfen — alle Fehler werden geschluckt.
  */
@@ -31,19 +30,12 @@ export async function triggerCompaction(
 
   // Kandidaten als async-Closures
   const candidates: Array<() => Promise<boolean>> = [
-    // 1. client.session.summarize({ body?: { providerID, modelID }, path: { id: sessionID } })
-    // Uses CC_COMPACTION_PROVIDER_ID / CC_COMPACTION_MODEL_ID env vars for model selection.
-    // Falls back to opencode's default compact model when env vars are absent (body is optional per SDK).
+    // 1. client.session.compact({ sessionID })
+    // Uses opencode's SDK method — no env vars needed for model selection.
     async () => {
-      const summarize = (c["session"] as Record<string, unknown> | undefined)?.["summarize"];
-      if (!isFn(summarize)) return false;
-      const providerID = process.env.CC_COMPACTION_PROVIDER_ID;
-      const modelID = process.env.CC_COMPACTION_MODEL_ID;
-      const opts: Record<string, unknown> = { path: { id: sessionID } };
-      if (providerID && modelID) {
-        opts.body = { providerID, modelID };
-      }
-      return tryCall(summarize.bind(c["session"]), opts);
+      const compact = (c["session"] as Record<string, unknown> | undefined)?.["compact"];
+      if (!isFn(compact)) return false;
+      return tryCall(compact.bind(c["session"]), { sessionID });
     },
   ];
 
