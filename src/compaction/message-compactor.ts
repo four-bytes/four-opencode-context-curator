@@ -1,4 +1,4 @@
-import { getCompactionState, clearSignal, markApplied, wasApplied, addEvent } from "./state.js";
+import { getCompactionState, markAppliedMessages, wasAppliedMessages, addEvent } from "./state.js";
 import { writeDiaryEntry } from "./diary.js";
 import { logDebugEvent } from "../debug-logger.js";
 
@@ -109,7 +109,7 @@ export function compactMessageHistory(messages: MessageItem[]): CompactionResult
     };
   }
 
-  const newBlocks = signal.safeToCompact.filter((b) => !wasApplied(b));
+  const newBlocks = signal.safeToCompact.filter((b) => !wasAppliedMessages(b));
   if (signal.safeToCompact.length > 0 && newBlocks.length === 0) {
     return {
       messagesBefore: messages.length,
@@ -149,7 +149,7 @@ export function compactMessageHistory(messages: MessageItem[]): CompactionResult
 
   // Mark blocks as applied
   for (const block of signal.safeToCompact) {
-    markApplied(block);
+    markAppliedMessages(block);
   }
 
   // Record event
@@ -187,8 +187,6 @@ export function compactMessageHistory(messages: MessageItem[]): CompactionResult
     reason: signal.reason,
     sessionId,
   });
-
-  clearSignal();
 
   return {
     messagesBefore,

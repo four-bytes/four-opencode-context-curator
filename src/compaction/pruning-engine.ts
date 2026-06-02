@@ -1,8 +1,7 @@
 import {
   getCompactionState,
-  clearSignal,
-  markApplied,
-  wasApplied,
+  markAppliedPruning,
+  wasAppliedPruning,
   addEvent,
 } from "./state.js";
 import { writeDiaryEntry } from "./diary.js";
@@ -140,7 +139,7 @@ export function applyPruning(
   }
 
   // Guard: already applied for all requested blocks
-  const newBlocks = signal.safeToCompact.filter((b) => !wasApplied(b));
+  const newBlocks = signal.safeToCompact.filter((b) => !wasAppliedPruning(b));
   if (newBlocks.length === 0) {
     stats.prunedLines = stats.originalLines;
     return { contents: layerContents, stats };
@@ -170,7 +169,7 @@ export function applyPruning(
 
   // Mark all safe_to_compact blocks as applied
   for (const block of signal.safeToCompact) {
-    markApplied(block);
+    markAppliedPruning(block);
   }
 
   // Record event
@@ -207,9 +206,6 @@ export function applyPruning(
     `[four-cc:pruning] COMPACTED: ${stats.originalLines}→${stats.prunedLines} lines ` +
       `(${stats.blocksCondensed} blocks, ${stats.duplicatesRemoved} dups) — ${signal.reason}`,
   );
-
-  // Clear signal after applying (prevents re-application same turn)
-  clearSignal();
 
   return { contents: condensed, stats };
 }
