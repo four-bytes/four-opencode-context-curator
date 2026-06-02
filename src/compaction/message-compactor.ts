@@ -97,7 +97,9 @@ export function compactMessageHistory(messages: MessageItem[]): CompactionResult
   const state = getCompactionState();
   const signal = state.lastSignal;
 
-  if (!signal || signal.advice === "no_compact") {
+  const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
+
+  if (!triggered && (!signal || signal.advice === "no_compact")) {
     return {
       messagesBefore: messages.length,
       messagesAfter: messages.length,
@@ -109,8 +111,10 @@ export function compactMessageHistory(messages: MessageItem[]): CompactionResult
     };
   }
 
-  const newBlocks = signal.safeToCompact.filter((b) => !wasAppliedMessages(b));
-  if (signal.safeToCompact.length > 0 && newBlocks.length === 0) {
+  // In trigger-only mode (no signal), still apply generic pruning
+  // but skip block-based condensing
+  const newBlocks = signal ? signal.safeToCompact.filter((b) => !wasAppliedMessages(b)) : [];
+  if (signal && signal.safeToCompact.length > 0 && newBlocks.length === 0 && !triggered) {
     return {
       messagesBefore: messages.length,
       messagesAfter: messages.length,
@@ -126,9 +130,9 @@ export function compactMessageHistory(messages: MessageItem[]): CompactionResult
   const messagesBefore = messages.length;
   const sessionId = extractSessionId(messages);
 
-  // Step 1: Drop old messages on compact_now (keep only last KEEP_RECENT)
+  // Step 1: Drop old messages on compact_now or trigger-only (keep only last KEEP_RECENT)
   let removed = 0;
-  if (signal.advice === "compact_now" && messages.length > KEEP_RECENT) {
+  if ((signal?.advice === "compact_now" || triggered) && messages.length > KEEP_RECENT) {
     removed = messages.length - KEEP_RECENT;
     // Mutate array in-place: remove oldest messages
     messages.splice(0, removed);
@@ -147,24 +151,26 @@ export function compactMessageHistory(messages: MessageItem[]): CompactionResult
       ? Math.round(((charsBefore - charsAfter) / charsBefore) * 100)
       : 0;
 
-  // Mark blocks as applied
-  for (const block of signal.safeToCompact) {
-    markAppliedMessages(block);
+  // Mark blocks as applied (skip in trigger-only mode)
+  if (signal) {
+    for (const block of signal.safeToCompact) {
+      markAppliedMessages(block);
+    }
   }
 
   // Record event
   addEvent({
     ts: Date.now(),
-    advice: signal.advice,
-    reason: signal.reason,
+    advice: signal?.advice ?? "triggered",
+    reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
     blocksCondensed: removed + truncations + duplicates,
   });
 
   // Write diary
   writeDiaryEntry({
     ts: Date.now(),
-    advice: signal.advice,
-    reason: signal.reason,
+    advice: signal?.advice ?? "triggered",
+    reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
     blocksCondensed: removed + truncations + duplicates,
     duplicatesRemoved: duplicates,
     linesBefore: charsBefore,
@@ -183,8 +189,8 @@ export function compactMessageHistory(messages: MessageItem[]): CompactionResult
     reductionPct,
     truncations,
     duplicates,
-    advice: signal.advice,
-    reason: signal.reason,
+    advice: signal?.advice ?? "triggered",
+    reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
     sessionId,
   });
 

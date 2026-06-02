@@ -85,9 +85,19 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         const state = getCompactionState();
         const signal = state.lastSignal;
         const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
-        logDebugEvent("compaction.compacting", { triggered, advice: signal?.advice ?? "none" });
+
+        // Set trigger flag so subsequent transforms (system.transform, messages.transform)
+        // will apply pruning. Don't clear here — transforms handle cleanup.
+        process.env.CC_COMPACTION_TRIGGER = "true";
+
+        logDebugEvent("compaction.compacting", {
+          triggered: true,
+          advice: signal?.advice ?? "none",
+        });
 
         if (!triggered && (!signal || signal.advice === "no_compact")) {
+          // Even for no_compact: keep CC_COMPACTION_TRIGGER set for generic pruning
+          // (truncation + dedup) in transforms
           return;
         }
 
@@ -116,10 +126,6 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
             lines.push(`Completed blocks: ${signal.safeToCompact.join(", ")}`);
           }
           output.prompt = lines.join("\n");
-        }
-
-        if (triggered) {
-          delete process.env.CC_COMPACTION_TRIGGER;
         }
       } catch {
         // Non-blocking
@@ -150,6 +156,9 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         clearSignal();
       } catch {
         // Non-blocking
+      } finally {
+        // Clean up trigger flag after both transforms have run
+        delete process.env.CC_COMPACTION_TRIGGER;
       }
     },
   };
