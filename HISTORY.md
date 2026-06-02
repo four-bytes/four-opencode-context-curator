@@ -1,5 +1,51 @@
 # Project Change History
 
+## [0.3.10] - 2026-06-02
+
+### Changed
+- Dynamic provider/model derivation for summarize candidates instead of static env vars (#69 follow-up)
+  - messages.transform extracts providerID and modelID from the last user message and stores in state
+  - trigger.ts reads from state first, falls back to CC_COMPACT_PROVIDER / CC_COMPACT_MODEL env vars
+  - Pattern mirrors opencode-src session/prompt.ts:1332 compaction.create call
+
+### Added
+- New diagnostic event compaction.user_model.updated when last user model is captured
+- compaction.trigger.summarize.config now reports source field (state, env, none)
+
+## [0.3.9] - 2026-06-02
+
+### Added
+- Persistent server-side compaction via v1 summarize endpoint (#69 follow-up)
+  - Two new trigger candidates summarize.via_internal.post and summarize.via_internal.post.legacy
+  - Calls /session/:id/summarize which invokes compactSvc.create() and writes a persistent CompactionPart with tail_start_id
+  - Survives session resume (opencode -c) — opencode message-v2.ts rehydrates only summary + tail
+  - Requires env vars CC_COMPACT_PROVIDER and CC_COMPACT_MODEL — skips candidate if missing
+  - New diagnostic event compaction.trigger.summarize.config
+
+### Changed
+- Empty-message guard placeholder reduced to single ellipsis character (U+2026) to prevent LLM context echo of verbose placeholder text
+
+## [0.3.8] - 2026-06-02
+
+### Fixed
+- CRITICAL hotfix: empty assistant-message hang. When an assistant message contained only a compaction_advice signal block, stripCompactionSignal reduced it to empty string and Anthropic API rejected the request, hanging the session. Added a guard in messages.transform that injects a placeholder text part when an assistant message has no non-empty text and no tool calls.
+
+## [0.3.7] - 2026-06-02
+
+### Added
+- Internal `_client` SDK Hey-API path as primary compaction trigger (#69)
+  - Two new candidates: `internal._client.post` (URL template + path) and `internal._client.post.legacy` (raw absolute path)
+  - New diagnostic event `compaction.trigger.internal.shape` dumps `_client` method surface
+  - Investigation: real plugin context has no `client.v2`, `client.session.compact` is not an own-property — must use overridden fetch via internal Hey-API client
+
+## [0.3.6] - 2026-06-02
+
+### Added
+- Diagnostic logging in `src/compaction/trigger.ts` for SDK + HTTP fallback debugging (#69)
+  - `compaction.trigger.shape` — dumps `ctx.client` structure (clientKeys, v2Keys, v2SessionKeys, etc.)
+  - `compaction.trigger.error` — captures SDK candidate errors with stack trace
+  - `compaction.trigger.http.error` — captures fetch errors in HTTP fallback path
+
 ## v0.3.5 (2026-06-02)
 ### Changed
 - Startup log on plugin init: stderr line `[four-opencode-context-curator] v<version> loaded (pid=..., CC_DEBUG=...)` plus `compaction.plugin.loaded` debug event (#67)

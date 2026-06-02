@@ -9,7 +9,7 @@ import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
 import { createCompactionSignalHook, stripCompactionSignal } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
-import { getCompactionState, clearSignal } from "./compaction/state.js";
+import { getCompactionState, clearSignal, setLastUserModel } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
 import { triggerCompaction } from "./compaction/trigger.js";
 import { logDebugEvent } from "./debug-logger.js";
@@ -165,14 +165,74 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
           }>,
         );
 
+        // Derive provider/model from last user message for summarize candidate
+        let lastUserMsg: (typeof output.messages)[number] | undefined;
+        for (let i = output.messages.length - 1; i >= 0; i--) {
+          const m = output.messages[i] as { info?: { role?: string } };
+          if (m.info?.role === "user") {
+            lastUserMsg = output.messages[i];
+            break;
+          }
+        }
+        if (lastUserMsg) {
+          const info = (lastUserMsg as { info?: Record<string, unknown> }).info;
+          if (info) {
+            let providerID: string | undefined;
+            let modelID: string | undefined;
+            let path: string | undefined;
+            if (typeof info.providerID === "string" && typeof info.modelID === "string") {
+              providerID = info.providerID;
+              modelID = info.modelID;
+              path = "info";
+            } else if (
+              typeof info.agent === "object" &&
+              info.agent !== null &&
+              typeof (info.agent as Record<string, unknown>).providerID === "string" &&
+              typeof (info.agent as Record<string, unknown>).modelID === "string"
+            ) {
+              providerID = (info.agent as Record<string, unknown>).providerID as string;
+              modelID = (info.agent as Record<string, unknown>).modelID as string;
+              path = "info.agent";
+            } else if (
+              typeof info.model === "object" &&
+              info.model !== null &&
+              typeof (info.model as Record<string, unknown>).providerID === "string" &&
+              typeof (info.model as Record<string, unknown>).modelID === "string"
+            ) {
+              providerID = (info.model as Record<string, unknown>).providerID as string;
+              modelID = (info.model as Record<string, unknown>).modelID as string;
+              path = "info.model";
+            }
+            if (path) {
+              setLastUserModel(providerID, modelID);
+              logDebugEvent("compaction.user_model.updated", { providerID, modelID, path });
+            } else {
+              logDebugEvent("compaction.user_model.shape_unknown", { keys: Object.keys(info) });
+            }
+          }
+        }
+
         // Strip compaction_signal from visible output
         for (const msg of output.messages) {
-          const m = msg as { parts?: Array<{ type: string; text?: string }> };
+          const m = msg as {
+            info?: { role?: string };
+            parts?: Array<{ type: string; text?: string }>;
+          };
           if (!Array.isArray(m.parts)) continue;
           for (const part of m.parts) {
             if (part.type === "text" && typeof part.text === "string") {
               part.text = stripCompactionSignal(part.text);
             }
+          }
+          // Guard: assistant message must not be empty after stripping
+          const role = m.info?.role;
+          const hasNonEmptyText = m.parts.some(
+            (p) => p.type === "text" && typeof p.text === "string" && p.text.length > 0,
+          );
+          const hasToolCall = m.parts.some((p) => p.type === "tool-call" || p.type === "tool_call");
+          if (role === "assistant" && !hasNonEmptyText && !hasToolCall) {
+            m.parts.push({ type: "text", text: "\u2026" });
+            logDebugEvent("compaction.guard.placeholder_injected", { partCount: m.parts.length });
           }
         }
 
