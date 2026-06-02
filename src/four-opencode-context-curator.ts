@@ -19,6 +19,24 @@ import { logDebugEvent } from "./debug-logger.js";
  * Wave P4a (BIG WIN): 4 Cache-Layer + Compaction-Modul.
  */
 export const FourContextCuratorPlugin: Plugin = async (ctx) => {
+  // Startup log — once per plugin init (stderr, never stdout to protect LLM streams)
+  try {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const pkgPath = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "package.json");
+    let version = "unknown";
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+      version = pkg.version ?? "unknown";
+    } catch {}
+    const ccDebug = process.env.CC_DEBUG ?? "unset";
+    const pid = process.pid;
+    process.stderr.write(`[four-opencode-context-curator] v${version} loaded (pid=${pid}, CC_DEBUG=${ccDebug})\n`);
+    logDebugEvent("compaction.plugin.loaded", { version, pid, ccDebug });
+  } catch {
+    // never throw from startup log
+  }
+
   const layers: Layer[] = [
     new CorePrefixLayer(),
     new RepoProfileLayer(),
