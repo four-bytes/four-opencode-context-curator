@@ -9,7 +9,7 @@ import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
 import { createCompactionSignalHook, stripCompactionSignal } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
-import { getCompactionState } from "./compaction/state.js";
+import { getCompactionState, clearSignal } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
 import { triggerCompaction } from "./compaction/trigger.js";
 import { logDebugEvent } from "./debug-logger.js";
@@ -145,6 +145,9 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
             }
           }
         }
+
+        // Clear signal after both transforms have had their chance
+        clearSignal();
       } catch {
         // Non-blocking
       }
