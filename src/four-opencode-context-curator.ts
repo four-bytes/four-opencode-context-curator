@@ -84,7 +84,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       } catch {}
 
       // Only trigger actual compaction for compact_now with a valid session
-      if (signal.advice === "compact_now" && sessionID && canTriggerCompaction(5000)) {
+      if (signal.advice === "compact_now" && sessionID && canTriggerCompaction(5000) && signal.safeToCompact.length > 0) {
         const sid = sessionID;
         const serverUrlStr = ctx.serverUrl?.toString();
         if (!serverUrlStr) {
