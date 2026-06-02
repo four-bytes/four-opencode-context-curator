@@ -1,5 +1,12 @@
 # Project Change History
 
+## v0.3.4 — 2026-06-02
+
+### Fixed
+- triggerCompaction verwendet jetzt `client.v2.session.compact()` als primären SDK-Pfad, `client.session.compact()` als Legacy-Fallback (#65)
+- Debug-Logging für jeden Compaction-Trigger-Kandidaten, HTTP-Fallback und CC_COMPACTION_COMMAND (#65)
+- serverUrl-Prüfung vor Trigger mit separates Debug-Event (#65)
+
 ## v0.3.2 — 2026-06-02
 
 ### Added
