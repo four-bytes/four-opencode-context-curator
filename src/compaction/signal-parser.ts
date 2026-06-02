@@ -6,24 +6,6 @@ export interface CompactionSignal {
   safeToCompact: string[];
 }
 
-/**
- * Extracts text content from a message object ({ info, parts } shape).
- */
-function extractText(message: unknown): string | null {
-  if (!message || typeof message !== "object") return null;
-
-  const msg = message as Record<string, unknown>;
-  const parts = msg.parts;
-  if (!Array.isArray(parts)) return null;
-
-  return parts
-    .filter((p): p is Record<string, unknown> => typeof p === "object" && p !== null)
-    .filter(p => p.type === "text")
-    .map(p => String(p.text ?? ""))
-    .join("\n")
-    .trim() || null;
-}
-
 export function parseCompactionSignal(text: string): CompactionSignal | null {
   const adviceMatch = text.match(/compaction_advice:\s*(no_compact|compact_soon|compact_now)/i);
   if (!adviceMatch) return null;
