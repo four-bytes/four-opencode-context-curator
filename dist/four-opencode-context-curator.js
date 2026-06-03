@@ -433,11 +433,21 @@ function setLastUserModel(providerID, modelID) {
 function getLastUserModel() {
   return state.lastUserModel;
 }
+var lastTriggeredAt = 0;
+function canTriggerCompaction(cooldownMs = 5000) {
+  const now = Date.now();
+  if (now - lastTriggeredAt < cooldownMs)
+    return false;
+  lastTriggeredAt = now;
+  return true;
+}
 
 // src/compaction/signal-parser.ts
 function parseCompactionSignal(text) {
   const adviceMatch = text.match(/compaction_advice:\s*(no_compact|compact_soon|compact_now)/i);
   if (!adviceMatch)
+    return null;
+  if (adviceMatch.index !== undefined && adviceMatch.index < text.length - Math.max(300, Math.ceil(text.length * 0.2)))
     return null;
   const adviceRaw = adviceMatch[1].toLowerCase();
   if (adviceRaw !== "no_compact" && adviceRaw !== "compact_soon" && adviceRaw !== "compact_now") {
@@ -1070,7 +1080,7 @@ var FourContextCuratorPlugin = async (ctx) => {
           });
         })().catch(() => {});
       } catch {}
-      if (signal.advice === "compact_now" && sessionID) {
+      if (signal.advice === "compact_now" && sessionID && canTriggerCompaction(5000) && signal.safeToCompact.length > 0) {
         const sid = sessionID;
         const serverUrlStr = ctx.serverUrl?.toString();
         if (!serverUrlStr) {
