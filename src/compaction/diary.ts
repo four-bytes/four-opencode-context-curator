@@ -13,6 +13,7 @@ export interface DiaryEntry {
   reductionPct: number;
   sessionId: string;
   triggered: boolean;
+  downgraded?: boolean;
 }
 
 const CACHE_DIR = join(homedir(), ".cache", "opencode", "four-opencode-context-curator");

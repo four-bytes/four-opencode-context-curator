@@ -1,5 +1,13 @@
 # Project Change History
 
+## [0.3.13] - 2026-06-03
+
+### Fixed
+- Post-compaction cooldown (3 turns): verhindert Doppel-compact_now-Signal direkt nach erfolgreicher Compaction (#88)
+- Signal-Injektor jetzt Cooldown-bewusst: hängt Zusatz-Hinweis an wenn Cooldown aktiv ist (#88)
+- Event-Hook downgradet compact_now auf no_compact + writeDiaryEntry mit downgraded:true wenn Cooldown aktiv (#88)
+- Diary-Entry um optionales downgraded-Feld erweitert (backward-compatibel) (#88)
+
 ## [0.3.12] - 2026-06-03
 
 ### Added

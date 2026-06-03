@@ -5,7 +5,7 @@
  */
 
 import { logDebugEvent } from "../debug-logger.js";
-import { getLastUserModel } from "./state.js";
+import { getLastUserModel, startCompactionCooldown } from "./state.js";
 
 type AnyFn = (...args: unknown[]) => unknown;
 
@@ -185,7 +185,7 @@ export async function triggerCompaction(
     try {
       const ok = await fn();
       logDebugEvent("compaction.trigger.candidate", { name, ok });
-      if (ok) return true;
+      if (ok) { startCompactionCooldown(3); return true; }
     } catch {
       logDebugEvent("compaction.trigger.candidate", { name, ok: false });
       // weiter
@@ -202,7 +202,7 @@ export async function triggerCompaction(
         status: response.status,
         ok: response.ok,
       });
-      if (response.ok) return true;
+      if (response.ok) { startCompactionCooldown(3); return true; }
     } catch (e) {
       logDebugEvent("compaction.trigger.http.error", {
         url: `${serverUrl.replace(/\/+$/, "")}/api/session/${encodeURIComponent(sessionID)}/compact`,

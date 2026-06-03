@@ -9,7 +9,7 @@ import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
 import { createCompactionSignalHook, stripCompactionSignal } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
-import { getCompactionState, clearSignal, setLastUserModel, canTriggerCompaction, setLastTokenEstimate, getLastTokenEstimate } from "./compaction/state.js";
+import { getCompactionState, clearSignal, setLastUserModel, canTriggerCompaction, setLastTokenEstimate, getLastTokenEstimate, isInCompactionCooldown, decrementCompactionCooldown } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
 import { estimateMessageTokens } from "./compaction/tokens.js";
 import { triggerCompaction } from "./compaction/trigger.js";
@@ -65,6 +65,32 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       output.system.push(createCompactionInstruction());
     },
     event: createCompactionSignalHook((signal, sessionID) => {
+      // Decrement compaction cooldown once per assistant message turn
+      decrementCompactionCooldown();
+
+      // If cooldown active, downgrade compact_now to no_compact (prevent double-trigger)
+      if (isInCompactionCooldown()) {
+        try {
+          (async () => {
+            const { writeDiaryEntry } = await import("./compaction/diary.js");
+            writeDiaryEntry({
+              ts: Date.now(),
+              advice: "no_compact",
+              reason: signal.reason,
+              blocksCondensed: signal.safeToCompact.length,
+              duplicatesRemoved: 0,
+              linesBefore: 0,
+              linesAfter: 0,
+              reductionPct: 0,
+              sessionId: sessionID ?? "",
+              triggered: false,
+              downgraded: true,
+            });
+          })().catch(() => {});
+        } catch {}
+        return;
+      }
+
       // Write diary entry for EVERY signal (fire-and-forget)
       try {
         (async () => {
