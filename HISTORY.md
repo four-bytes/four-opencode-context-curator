@@ -1,5 +1,15 @@
 # Project Change History
 
+## [Unreleased]
+
+### Changed
+- @opencode-ai/plugin: 1.15.10 → 1.15.13
+
+## [0.3.16] - 2026-06-04
+
+### Fixed
+- Compaction signal unsichtbar für Transforms nach Session-Fence-Refactoring (#94): Event-Hook speichert Signal jetzt zusätzlich unter "default" als Fallback für Transforms ohne Session-ID
+
 ## [0.3.14] - 2026-06-03
 
 ### Fixed
@@ -214,6 +224,13 @@
 - core_prefix Layer: Statische Global Rules (Stop-Mode, Search, Quality Gates) (#3, #8)
 - `src/layers/core-prefix.ts`: CorePrefixLayer-Klasse
 - Tests: 2 Cases (static content, source reference)
+
+## v0.3.2 — 2026-06-02
+
+### Fixed
+- Per-Transform Tracking verhindert Signal-Race zwischen applyPruning() und compactMessageHistory() — separate appliedFor-Sets, Signal wird erst nach beiden ge-cleart (#52)
+- triggerCompaction() ruft summarize() jetzt auch ohne CC_COMPACTION_PROVIDER_ID/CC_COMPACTION_MODEL_ID auf — body ist laut SDK optional, opencode nutzt Default-Compact-Model (#53)
+- session.compacting-Hook setzt CC_COMPACTION_TRIGGER=true und löscht ihn nicht vorzeitig; Transforms wenden generische Heuristiken auch im Trigger-Only-Mode an (ohne Signal) (#54)
 
 ## v0.2.0 — 2026-05-31
 
