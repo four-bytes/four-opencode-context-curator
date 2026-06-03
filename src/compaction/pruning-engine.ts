@@ -210,12 +210,6 @@ export function applyPruning(
     triggered: process.env.CC_COMPACTION_TRIGGER === "true",
   });
 
-  // eslint-disable-next-line no-console
-  console.warn(
-    `[four-cc:pruning] COMPACTED: ${stats.originalLines}→${stats.prunedLines} lines ` +
-      `(${stats.blocksCondensed} blocks, ${stats.duplicatesRemoved} dups) — ${signal?.reason ?? "triggered"}`,
-  );
-
   return { contents: condensed, stats };
 }
 

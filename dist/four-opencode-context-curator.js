@@ -642,7 +642,6 @@ function applyPruning(layerContents, config = {}) {
     sessionId: process.env.OPENDOC_SESSION_ID || "unknown",
     triggered: process.env.CC_COMPACTION_TRIGGER === "true"
   });
-  console.warn(`[four-cc:pruning] COMPACTED: ${stats.originalLines}\u2192${stats.prunedLines} lines ` + `(${stats.blocksCondensed} blocks, ${stats.duplicatesRemoved} dups) \u2014 ${signal?.reason ?? "triggered"}`);
   return { contents: condensed, stats };
 }
 function simpleHash(str) {
@@ -1124,6 +1123,7 @@ var FourContextCuratorPlugin = async (ctx) => {
     },
     event: createCompactionSignalHook((signal, sessionID) => {
       decrementCompactionCooldown(sessionID);
+      setLastSignal("default", signal);
       if (isInCompactionCooldown(sessionID)) {
         try {
           (async () => {
