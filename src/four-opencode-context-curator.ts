@@ -9,10 +9,9 @@ import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
 import { createCompactionSignalHook, stripCompactionSignal } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
-import { getCompactionState, clearSignal, setLastSignal, setLastUserModel, canTriggerCompaction, setLastTokenEstimate, getLastTokenEstimate, isInCompactionCooldown, decrementCompactionCooldown } from "./compaction/state.js";
+import { getCompactionState, clearSignal, setLastSignal, setLastUserModel, setLastTokenEstimate, getLastTokenEstimate, isInCompactionCooldown, decrementCompactionCooldown } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
 import { estimateMessageTokens } from "./compaction/tokens.js";
-import { triggerCompaction } from "./compaction/trigger.js";
 import { logDebugEvent } from "./debug-logger.js";
 
 /**
@@ -111,27 +110,6 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
           });
         })().catch(() => {});
       } catch {}
-
-      // Only trigger actual compaction for compact_now with a valid session
-      if (signal.advice === "compact_now" && sessionID && canTriggerCompaction(sessionID) && signal.safeToCompact.length > 0) {
-        const sid = sessionID;
-        const serverUrlStr = ctx.serverUrl?.toString();
-        if (!serverUrlStr) {
-          logDebugEvent("compaction.trigger.serverUrl.missing", {});
-        } else {
-          logDebugEvent("compaction.trigger.serverUrl.present", { serverUrl: serverUrlStr });
-        }
-        triggerCompaction(ctx.client, sid, serverUrlStr).then((found) => {
-          logDebugEvent("compaction.trigger.invoked", { sessionID: sid, found });
-        }).catch(() => {});
-
-        logDebugEvent("compaction.signal", {
-          advice: signal.advice,
-          reason: signal.reason,
-          safeToCompact: signal.safeToCompact,
-          sessionID: sid,
-        });
-      }
     }),
     "experimental.session.compacting": async (input, output) => {
       try {
