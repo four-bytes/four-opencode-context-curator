@@ -9,8 +9,9 @@ import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
 import { createCompactionSignalHook, stripCompactionSignal } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
-import { getCompactionState, clearSignal, setLastUserModel, canTriggerCompaction } from "./compaction/state.js";
+import { getCompactionState, clearSignal, setLastUserModel, canTriggerCompaction, setLastTokenEstimate, getLastTokenEstimate } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
+import { estimateMessageTokens } from "./compaction/tokens.js";
 import { triggerCompaction } from "./compaction/trigger.js";
 import { logDebugEvent } from "./debug-logger.js";
 
@@ -84,8 +85,14 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       } catch {}
 
       // Only trigger actual compaction for compact_now with a valid session
-      if (signal.advice === "compact_now" && sessionID && canTriggerCompaction(5000) && signal.safeToCompact.length > 0) {
+      if (signal.advice === "compact_now" && sessionID && canTriggerCompaction() && signal.safeToCompact.length > 0) {
         const sid = sessionID;
+        const minTokens = Number(process.env.CC_COMPACT_MIN_TOKENS ?? 50000);
+        const estimate = getLastTokenEstimate();
+        if (estimate < minTokens) {
+          logDebugEvent("compaction.skip.below_threshold", { estimate, threshold: minTokens, sessionID: sid });
+          return;
+        }
         const serverUrlStr = ctx.serverUrl?.toString();
         if (!serverUrlStr) {
           logDebugEvent("compaction.trigger.serverUrl.missing", {});
@@ -164,6 +171,14 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
             parts: Array<{ type: string; text?: string }>;
           }>,
         );
+
+        // Estimate total tokens after compaction
+        let totalTokens = 0;
+        for (const m of output.messages) {
+          totalTokens += estimateMessageTokens(m);
+        }
+        setLastTokenEstimate(totalTokens);
+        logDebugEvent("compaction.tokens.estimated", { totalTokens, messageCount: output.messages.length });
 
         // Derive provider/model from last user message for summarize candidate
         let lastUserMsg: (typeof output.messages)[number] | undefined;
