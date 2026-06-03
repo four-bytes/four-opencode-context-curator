@@ -103,3 +103,21 @@ export function canTriggerCompaction(cooldownMs: number = 30000): boolean {
   lastTriggeredAt = now;
   return true;
 }
+
+let compactionCooldownRemaining = 0;
+
+export function startCompactionCooldown(turns: number = 3): void {
+  compactionCooldownRemaining = Math.max(compactionCooldownRemaining, turns);
+}
+
+export function decrementCompactionCooldown(): void {
+  if (compactionCooldownRemaining > 0) compactionCooldownRemaining--;
+}
+
+export function isInCompactionCooldown(): boolean {
+  return compactionCooldownRemaining > 0;
+}
+
+export function getCompactionCooldownRemaining(): number {
+  return compactionCooldownRemaining;
+}

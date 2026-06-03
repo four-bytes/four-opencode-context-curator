@@ -368,30 +368,6 @@ class IssueSliceLayer {
   }
 }
 
-// src/compaction/signal-injector.ts
-function createCompactionInstruction() {
-  return `\u2500\u2500 COMPACTION SIGNAL \u2500\u2500
-
-After completing a major work phase (issue done, research block finished, debug session closed), evaluate whether the session context would benefit from compaction. Output EXACTLY ONE of these signals at the end of your response:
-
-compaction_advice: no_compact
-reason: <one sentence why>
-
-compaction_advice: compact_soon
-reason: <one sentence why>
-
-compaction_advice: compact_now
-reason: <one sentence why>
-safe_to_compact: <comma-separated list of completed blocks>
-
-RULES:
-- compact_now: only when completed work blocks, repeated logs, or dead side-paths dominate the context AND the current task is complete
-- compact_soon: when context is growing but still manageable, compact after next task
-- no_compact: during active debugging, open investigations, or when critical state is fragile
-- NEVER signal compact_now during an open debug session
-- safe_to_compact: list only completed/stale blocks (e.g. "issue_5_research, tool_logs_turn_10-20")`;
-}
-
 // src/compaction/state.ts
 var state = {
   lastSignal: null,
@@ -447,6 +423,50 @@ function canTriggerCompaction(cooldownMs = 30000) {
     return false;
   lastTriggeredAt = now;
   return true;
+}
+var compactionCooldownRemaining = 0;
+function startCompactionCooldown(turns = 3) {
+  compactionCooldownRemaining = Math.max(compactionCooldownRemaining, turns);
+}
+function decrementCompactionCooldown() {
+  if (compactionCooldownRemaining > 0)
+    compactionCooldownRemaining--;
+}
+function isInCompactionCooldown() {
+  return compactionCooldownRemaining > 0;
+}
+function getCompactionCooldownRemaining() {
+  return compactionCooldownRemaining;
+}
+
+// src/compaction/signal-injector.ts
+function createCompactionInstruction() {
+  const base = `\u2500\u2500 COMPACTION SIGNAL \u2500\u2500
+
+After completing a major work phase (issue done, research block finished, debug session closed), evaluate whether the session context would benefit from compaction. Output EXACTLY ONE of these signals at the end of your response:
+
+compaction_advice: no_compact
+reason: <one sentence why>
+
+compaction_advice: compact_soon
+reason: <one sentence why>
+
+compaction_advice: compact_now
+reason: <one sentence why>
+safe_to_compact: <comma-separated list of completed blocks>
+
+RULES:
+- compact_now: only when completed work blocks, repeated logs, or dead side-paths dominate the context AND the current task is complete
+- compact_soon: when context is growing but still manageable, compact after next task
+- no_compact: during active debugging, open investigations, or when critical state is fragile
+- NEVER signal compact_now during an open debug session
+- safe_to_compact: list only completed/stale blocks (e.g. "issue_5_research, tool_logs_turn_10-20")`;
+  if (isInCompactionCooldown()) {
+    return base + `
+
+COMPACTION-COOLDOWN ACTIVE (${getCompactionCooldownRemaining()} turns remaining): A compaction was just triggered. Output \`no_compact\` unless a substantial NEW work block completed in this turn.`;
+  }
+  return base;
 }
 
 // src/compaction/signal-parser.ts
@@ -1009,8 +1029,10 @@ async function triggerCompaction(client, sessionID, serverUrl) {
     try {
       const ok = await fn();
       logDebugEvent("compaction.trigger.candidate", { name, ok });
-      if (ok)
+      if (ok) {
+        startCompactionCooldown(3);
         return true;
+      }
     } catch {
       logDebugEvent("compaction.trigger.candidate", { name, ok: false });
     }
@@ -1024,8 +1046,10 @@ async function triggerCompaction(client, sessionID, serverUrl) {
         status: response.status,
         ok: response.ok
       });
-      if (response.ok)
+      if (response.ok) {
+        startCompactionCooldown(3);
         return true;
+      }
     } catch (e) {
       logDebugEvent("compaction.trigger.http.error", {
         url: `${serverUrl.replace(/\/+$/, "")}/api/session/${encodeURIComponent(sessionID)}/compact`,
@@ -1094,6 +1118,28 @@ var FourContextCuratorPlugin = async (ctx) => {
       output.system.push(createCompactionInstruction());
     },
     event: createCompactionSignalHook((signal, sessionID) => {
+      decrementCompactionCooldown();
+      if (isInCompactionCooldown()) {
+        try {
+          (async () => {
+            const { writeDiaryEntry: writeDiaryEntry2 } = await Promise.resolve().then(() => (init_diary(), exports_diary));
+            writeDiaryEntry2({
+              ts: Date.now(),
+              advice: "no_compact",
+              reason: signal.reason,
+              blocksCondensed: signal.safeToCompact.length,
+              duplicatesRemoved: 0,
+              linesBefore: 0,
+              linesAfter: 0,
+              reductionPct: 0,
+              sessionId: sessionID ?? "",
+              triggered: false,
+              downgraded: true
+            });
+          })().catch(() => {});
+        } catch {}
+        return;
+      }
       try {
         (async () => {
           const { writeDiaryEntry: writeDiaryEntry2 } = await Promise.resolve().then(() => (init_diary(), exports_diary));
