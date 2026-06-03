@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.3.17] - 2026-06-04
+
+### Removed
+- console.warn aus applyPruning() entfernt (#96) — produzierte stderr-Output im TUI, Debug-Logging läuft über CC_DEBUG
+
 ### Changed
 - @opencode-ai/plugin: 1.15.10 → 1.15.13
 
