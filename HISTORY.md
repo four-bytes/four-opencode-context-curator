@@ -1,5 +1,16 @@
 # Project Change History
 
+## [0.3.12] - 2026-06-03
+
+### Added
+- Token-Guard vor Compaction-Trigger: Skip wenn geschätzter Kontext < `CC_COMPACT_MIN_TOKENS` (default 50000) in src/four-opencode-context-curator.ts (#86)
+- `src/compaction/tokens.ts` — estimateTokens + estimateMessageTokens (adaptiert aus four-opencode-token-budget-guard)
+- Token-Schätzung in messages.transform via estimateMessageTokens, gespeichert in state.lastTokenEstimate
+- Debug-Events `compaction.skip.below_threshold` + `compaction.tokens.estimated`
+
+### Changed
+- Cooldown-Default in canTriggerCompaction von 5000 ms auf 30000 ms erhöht (src/compaction/state.ts:90)
+
 ## [0.3.11] - 2026-06-03
 
 ### Added

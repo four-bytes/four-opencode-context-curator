@@ -399,7 +399,8 @@ var state = {
   appliedForPruning: new Set,
   appliedForMessages: new Set,
   history: [],
-  lastUserModel: { providerID: undefined, modelID: undefined }
+  lastUserModel: { providerID: undefined, modelID: undefined },
+  lastTokenEstimate: 0
 };
 function getCompactionState() {
   return state;
@@ -433,8 +434,14 @@ function setLastUserModel(providerID, modelID) {
 function getLastUserModel() {
   return state.lastUserModel;
 }
+function setLastTokenEstimate(n) {
+  state.lastTokenEstimate = n;
+}
+function getLastTokenEstimate() {
+  return state.lastTokenEstimate;
+}
 var lastTriggeredAt = 0;
-function canTriggerCompaction(cooldownMs = 5000) {
+function canTriggerCompaction(cooldownMs = 30000) {
   const now = Date.now();
   if (now - lastTriggeredAt < cooldownMs)
     return false;
@@ -447,6 +454,7 @@ function parseCompactionSignal(text) {
   const adviceMatch = text.match(/compaction_advice:\s*(no_compact|compact_soon|compact_now)/i);
   if (!adviceMatch)
     return null;
+  const n = text.length;
   if (adviceMatch.index !== undefined && adviceMatch.index < text.length - Math.max(300, Math.ceil(text.length * 0.2)))
     return null;
   const adviceRaw = adviceMatch[1].toLowerCase();
@@ -809,6 +817,29 @@ function simpleHash2(str) {
   return String(hash);
 }
 
+// src/compaction/tokens.ts
+function estimateTokens(text) {
+  if (!text)
+    return 0;
+  return Math.ceil(text.length / 4);
+}
+function estimateMessageTokens(message) {
+  if (!message || typeof message !== "object")
+    return 0;
+  const parts = message.parts;
+  if (!Array.isArray(parts))
+    return 0;
+  let total = 0;
+  for (const part of parts) {
+    if (part && typeof part === "object") {
+      const text = part.text;
+      if (typeof text === "string")
+        total += estimateTokens(text);
+    }
+  }
+  return total;
+}
+
 // src/compaction/trigger.ts
 function isFn(v) {
   return typeof v === "function";
@@ -1080,8 +1111,14 @@ var FourContextCuratorPlugin = async (ctx) => {
           });
         })().catch(() => {});
       } catch {}
-      if (signal.advice === "compact_now" && sessionID && canTriggerCompaction(5000) && signal.safeToCompact.length > 0) {
+      if (signal.advice === "compact_now" && sessionID && canTriggerCompaction() && signal.safeToCompact.length > 0) {
         const sid = sessionID;
+        const minTokens = Number(process.env.CC_COMPACT_MIN_TOKENS ?? 50000);
+        const estimate = getLastTokenEstimate();
+        if (estimate < minTokens) {
+          logDebugEvent("compaction.skip.below_threshold", { estimate, threshold: minTokens, sessionID: sid });
+          return;
+        }
         const serverUrlStr = ctx.serverUrl?.toString();
         if (!serverUrlStr) {
           logDebugEvent("compaction.trigger.serverUrl.missing", {});
@@ -1141,6 +1178,12 @@ var FourContextCuratorPlugin = async (ctx) => {
       try {
         logDebugEvent("compaction.messages.transform", { messageCount: output.messages.length });
         compactMessageHistory(output.messages);
+        let totalTokens = 0;
+        for (const m of output.messages) {
+          totalTokens += estimateMessageTokens(m);
+        }
+        setLastTokenEstimate(totalTokens);
+        logDebugEvent("compaction.tokens.estimated", { totalTokens, messageCount: output.messages.length });
         let lastUserMsg;
         for (let i = output.messages.length - 1;i >= 0; i--) {
           const m = output.messages[i];

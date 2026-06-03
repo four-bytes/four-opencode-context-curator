@@ -19,6 +19,7 @@ export interface CompactionState {
   appliedForMessages: Set<string>;
   history: CompactionEvent[];
   lastUserModel: LastUserModel;
+  lastTokenEstimate: number;
 }
 
 const state: CompactionState = {
@@ -28,6 +29,7 @@ const state: CompactionState = {
   appliedForMessages: new Set(),
   history: [],
   lastUserModel: { providerID: undefined, modelID: undefined },
+  lastTokenEstimate: 0,
 };
 
 export function getCompactionState(): CompactionState {
@@ -85,9 +87,17 @@ export function getLastUserModel(): LastUserModel {
   return state.lastUserModel;
 }
 
+export function setLastTokenEstimate(n: number): void {
+  state.lastTokenEstimate = n;
+}
+
+export function getLastTokenEstimate(): number {
+  return state.lastTokenEstimate;
+}
+
 let lastTriggeredAt = 0;
 
-export function canTriggerCompaction(cooldownMs: number = 5000): boolean {
+export function canTriggerCompaction(cooldownMs: number = 30000): boolean {
   const now = Date.now();
   if (now - lastTriggeredAt < cooldownMs) return false;
   lastTriggeredAt = now;
