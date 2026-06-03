@@ -1,5 +1,14 @@
 # Project Change History
 
+## [0.3.14] - 2026-06-03
+
+### Fixed
+- Token-Threshold-Guard (CC_COMPACT_MIN_TOKENS) aus compact_now-Trigger entfernt — blockte fast alle Compactions wegen strukturellem Undercounting (#90)
+- 3-Turn-Post-Compaction-Cooldown (v0.3.13) übernimmt Doppel-Trigger-Schutz — Token-Gate redundant und schädlich
+
+### Changed
+- estimateMessageTokens + debug-event compaction.tokens.estimated bleiben als reine Diagnose erhalten
+
 ## [0.3.13] - 2026-06-03
 
 ### Fixed

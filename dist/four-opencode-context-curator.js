@@ -413,9 +413,6 @@ function getLastUserModel() {
 function setLastTokenEstimate(n) {
   state.lastTokenEstimate = n;
 }
-function getLastTokenEstimate() {
-  return state.lastTokenEstimate;
-}
 var lastTriggeredAt = 0;
 function canTriggerCompaction(cooldownMs = 30000) {
   const now = Date.now();
@@ -1159,12 +1156,6 @@ var FourContextCuratorPlugin = async (ctx) => {
       } catch {}
       if (signal.advice === "compact_now" && sessionID && canTriggerCompaction() && signal.safeToCompact.length > 0) {
         const sid = sessionID;
-        const minTokens = Number(process.env.CC_COMPACT_MIN_TOKENS ?? 50000);
-        const estimate = getLastTokenEstimate();
-        if (estimate < minTokens) {
-          logDebugEvent("compaction.skip.below_threshold", { estimate, threshold: minTokens, sessionID: sid });
-          return;
-        }
         const serverUrlStr = ctx.serverUrl?.toString();
         if (!serverUrlStr) {
           logDebugEvent("compaction.trigger.serverUrl.missing", {});
