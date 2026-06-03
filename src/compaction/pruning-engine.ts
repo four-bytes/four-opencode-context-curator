@@ -15,6 +15,8 @@ export interface PruningConfig {
   footerLines: number;
   /** Minimum completed blocks before pruning activates */
   minCompletedBlocks: number;
+  /** Session ID for session-fenced state (default: env OPENDOC_SESSION_ID or "default") */
+  sessionID?: string;
 }
 
 export interface PruningStats {
@@ -113,9 +115,11 @@ export function condenseIssueSlice(
  */
 export function applyPruning(
   layerContents: string[],
-  config: PruningConfig = DEFAULT_CONFIG,
+  config: Partial<PruningConfig> = {},
 ): { contents: string[]; stats: PruningStats } {
-  const state = getCompactionState();
+  const cfg: PruningConfig = { ...DEFAULT_CONFIG, ...config };
+  const sessionID = cfg.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default";
+  const state = getCompactionState(sessionID);
   const signal = state.lastSignal;
 
   const stats: PruningStats = {
@@ -132,7 +136,7 @@ export function applyPruning(
   // UNLESS CC_COMPACTION_TRIGGER is set → apply generic heuristics
   const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
   if (!triggered) {
-    if (!signal || signal.advice === "no_compact" || signal.safeToCompact.length < config.minCompletedBlocks) {
+    if (!signal || signal.advice === "no_compact" || signal.safeToCompact.length < cfg.minCompletedBlocks) {
       stats.prunedLines = stats.originalLines;
       return { contents: layerContents, stats };
     }
@@ -140,7 +144,7 @@ export function applyPruning(
 
   // Guard: already applied for all requested blocks (skip if trigger-only, no signal)
   if (signal) {
-    const newBlocks = signal.safeToCompact.filter((b) => !wasAppliedPruning(b));
+    const newBlocks = signal.safeToCompact.filter((b) => !wasAppliedPruning(sessionID, b));
     if (newBlocks.length === 0 && !triggered) {
       stats.prunedLines = stats.originalLines;
       return { contents: layerContents, stats };
@@ -149,7 +153,7 @@ export function applyPruning(
 
   // Step 1: Truncate long tool outputs
   const truncated = layerContents.map((c) =>
-    truncateToolLogs(c, config.maxToolLogLines),
+    truncateToolLogs(c, cfg.maxToolLogLines),
   );
 
   // Step 2: Deduplicate repeated outputs
@@ -173,12 +177,12 @@ export function applyPruning(
   // Mark all safe_to_compact blocks as applied (skip if trigger-only)
   if (signal) {
     for (const block of safeToCompact) {
-      markAppliedPruning(block);
+      markAppliedPruning(sessionID, block);
     }
   }
 
   // Record event
-  addEvent({
+  addEvent(sessionID, {
     ts: Date.now(),
     advice: signal?.advice ?? "triggered",
     reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",

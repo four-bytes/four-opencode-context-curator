@@ -22,102 +22,126 @@ export interface CompactionState {
   lastTokenEstimate: number;
 }
 
-const state: CompactionState = {
-  lastSignal: null,
-  appliedFor: new Set(),
-  appliedForPruning: new Set(),
-  appliedForMessages: new Set(),
-  history: [],
-  lastUserModel: { providerID: undefined, modelID: undefined },
-  lastTokenEstimate: 0,
-};
+const sessionStates = new Map<string, CompactionState>();
 
-export function getCompactionState(): CompactionState {
-  return state;
+function getSessionState(sessionID: string = "default"): CompactionState {
+  let s = sessionStates.get(sessionID);
+  if (!s) {
+    s = {
+      lastSignal: null,
+      appliedFor: new Set(),
+      appliedForPruning: new Set(),
+      appliedForMessages: new Set(),
+      history: [],
+      lastUserModel: { providerID: undefined, modelID: undefined },
+      lastTokenEstimate: 0,
+    };
+    sessionStates.set(sessionID, s);
+  }
+  return s;
 }
 
-export function setLastSignal(signal: CompactionSignal): void {
-  state.lastSignal = signal;
+export function getSessionIDs(): string[] {
+  return Array.from(sessionStates.keys());
 }
 
-export function clearSignal(): void {
-  state.lastSignal = null;
-  state.appliedForPruning.clear();
-  state.appliedForMessages.clear();
+export function removeSession(sessionID: string): void {
+  sessionStates.delete(sessionID);
+  triggerCooldowns.delete(sessionID);
+  compactionCooldowns.delete(sessionID);
 }
 
-export function markApplied(block: string): void {
-  state.appliedFor.add(block);
+export function getCompactionState(sessionID: string = "default"): CompactionState {
+  return getSessionState(sessionID);
 }
 
-export function wasApplied(block: string): boolean {
-  return state.appliedFor.has(block);
+export function setLastSignal(sessionID: string, signal: CompactionSignal): void {
+  getSessionState(sessionID).lastSignal = signal;
 }
 
-export function markAppliedPruning(block: string): void {
-  state.appliedForPruning.add(block);
+export function clearSignal(sessionID: string = "default"): void {
+  const s = getSessionState(sessionID);
+  s.lastSignal = null;
+  s.appliedForPruning.clear();
+  s.appliedForMessages.clear();
 }
 
-export function wasAppliedPruning(block: string): boolean {
-  return state.appliedForPruning.has(block);
+export function markApplied(sessionID: string, block: string): void {
+  getSessionState(sessionID).appliedFor.add(block);
 }
 
-export function markAppliedMessages(block: string): void {
-  state.appliedForMessages.add(block);
+export function wasApplied(sessionID: string, block: string): boolean {
+  return getSessionState(sessionID).appliedFor.has(block);
 }
 
-export function wasAppliedMessages(block: string): boolean {
-  return state.appliedForMessages.has(block);
+export function markAppliedPruning(sessionID: string, block: string): void {
+  getSessionState(sessionID).appliedForPruning.add(block);
 }
 
-export function clearTransformState(): void {
-  state.appliedForPruning.clear();
-  state.appliedForMessages.clear();
+export function wasAppliedPruning(sessionID: string, block: string): boolean {
+  return getSessionState(sessionID).appliedForPruning.has(block);
 }
 
-export function addEvent(event: CompactionEvent): void {
-  state.history.push(event);
+export function markAppliedMessages(sessionID: string, block: string): void {
+  getSessionState(sessionID).appliedForMessages.add(block);
 }
 
-export function setLastUserModel(providerID: string | undefined, modelID: string | undefined): void {
-  state.lastUserModel = { providerID, modelID };
+export function wasAppliedMessages(sessionID: string, block: string): boolean {
+  return getSessionState(sessionID).appliedForMessages.has(block);
 }
 
-export function getLastUserModel(): LastUserModel {
-  return state.lastUserModel;
+export function clearTransformState(sessionID: string = "default"): void {
+  const s = getSessionState(sessionID);
+  s.appliedForPruning.clear();
+  s.appliedForMessages.clear();
 }
 
-export function setLastTokenEstimate(n: number): void {
-  state.lastTokenEstimate = n;
+export function addEvent(sessionID: string, event: CompactionEvent): void {
+  getSessionState(sessionID).history.push(event);
 }
 
-export function getLastTokenEstimate(): number {
-  return state.lastTokenEstimate;
+export function setLastUserModel(sessionID: string, providerID: string | undefined, modelID: string | undefined): void {
+  getSessionState(sessionID).lastUserModel = { providerID, modelID };
 }
 
-let lastTriggeredAt = 0;
+export function getLastUserModel(sessionID: string = "default"): LastUserModel {
+  return getSessionState(sessionID).lastUserModel;
+}
 
-export function canTriggerCompaction(cooldownMs: number = 30000): boolean {
+export function setLastTokenEstimate(sessionID: string, n: number): void {
+  getSessionState(sessionID).lastTokenEstimate = n;
+}
+
+export function getLastTokenEstimate(sessionID: string = "default"): number {
+  return getSessionState(sessionID).lastTokenEstimate;
+}
+
+const triggerCooldowns = new Map<string, number>();
+
+export function canTriggerCompaction(sessionID: string, cooldownMs: number = 30000): boolean {
   const now = Date.now();
-  if (now - lastTriggeredAt < cooldownMs) return false;
-  lastTriggeredAt = now;
+  const lastTriggered = triggerCooldowns.get(sessionID) ?? 0;
+  if (now - lastTriggered < cooldownMs) return false;
+  triggerCooldowns.set(sessionID, now);
   return true;
 }
 
-let compactionCooldownRemaining = 0;
+const compactionCooldowns = new Map<string, number>();
 
-export function startCompactionCooldown(turns: number = 3): void {
-  compactionCooldownRemaining = Math.max(compactionCooldownRemaining, turns);
+export function startCompactionCooldown(sessionID: string, turns: number = 3): void {
+  const current = compactionCooldowns.get(sessionID) ?? 0;
+  compactionCooldowns.set(sessionID, Math.max(current, turns));
 }
 
-export function decrementCompactionCooldown(): void {
-  if (compactionCooldownRemaining > 0) compactionCooldownRemaining--;
+export function decrementCompactionCooldown(sessionID: string): void {
+  const current = compactionCooldowns.get(sessionID) ?? 0;
+  if (current > 0) compactionCooldowns.set(sessionID, current - 1);
 }
 
-export function isInCompactionCooldown(): boolean {
-  return compactionCooldownRemaining > 0;
+export function isInCompactionCooldown(sessionID: string): boolean {
+  return (compactionCooldowns.get(sessionID) ?? 0) > 0;
 }
 
-export function getCompactionCooldownRemaining(): number {
-  return compactionCooldownRemaining;
+export function getCompactionCooldownRemaining(sessionID: string): number {
+  return compactionCooldowns.get(sessionID) ?? 0;
 }

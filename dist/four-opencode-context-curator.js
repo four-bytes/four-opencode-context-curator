@@ -369,75 +369,87 @@ class IssueSliceLayer {
 }
 
 // src/compaction/state.ts
-var state = {
-  lastSignal: null,
-  appliedFor: new Set,
-  appliedForPruning: new Set,
-  appliedForMessages: new Set,
-  history: [],
-  lastUserModel: { providerID: undefined, modelID: undefined },
-  lastTokenEstimate: 0
-};
-function getCompactionState() {
-  return state;
+var sessionStates = new Map;
+function getSessionState(sessionID = "default") {
+  let s = sessionStates.get(sessionID);
+  if (!s) {
+    s = {
+      lastSignal: null,
+      appliedFor: new Set,
+      appliedForPruning: new Set,
+      appliedForMessages: new Set,
+      history: [],
+      lastUserModel: { providerID: undefined, modelID: undefined },
+      lastTokenEstimate: 0
+    };
+    sessionStates.set(sessionID, s);
+  }
+  return s;
 }
-function setLastSignal(signal) {
-  state.lastSignal = signal;
+function getCompactionState(sessionID = "default") {
+  return getSessionState(sessionID);
 }
-function clearSignal() {
-  state.lastSignal = null;
-  state.appliedForPruning.clear();
-  state.appliedForMessages.clear();
+function setLastSignal(sessionID, signal) {
+  getSessionState(sessionID).lastSignal = signal;
 }
-function markAppliedPruning(block) {
-  state.appliedForPruning.add(block);
+function clearSignal(sessionID = "default") {
+  const s = getSessionState(sessionID);
+  s.lastSignal = null;
+  s.appliedForPruning.clear();
+  s.appliedForMessages.clear();
 }
-function wasAppliedPruning(block) {
-  return state.appliedForPruning.has(block);
+function markAppliedPruning(sessionID, block) {
+  getSessionState(sessionID).appliedForPruning.add(block);
 }
-function markAppliedMessages(block) {
-  state.appliedForMessages.add(block);
+function wasAppliedPruning(sessionID, block) {
+  return getSessionState(sessionID).appliedForPruning.has(block);
 }
-function wasAppliedMessages(block) {
-  return state.appliedForMessages.has(block);
+function markAppliedMessages(sessionID, block) {
+  getSessionState(sessionID).appliedForMessages.add(block);
 }
-function addEvent(event) {
-  state.history.push(event);
+function wasAppliedMessages(sessionID, block) {
+  return getSessionState(sessionID).appliedForMessages.has(block);
 }
-function setLastUserModel(providerID, modelID) {
-  state.lastUserModel = { providerID, modelID };
+function addEvent(sessionID, event) {
+  getSessionState(sessionID).history.push(event);
 }
-function getLastUserModel() {
-  return state.lastUserModel;
+function setLastUserModel(sessionID, providerID, modelID) {
+  getSessionState(sessionID).lastUserModel = { providerID, modelID };
 }
-function setLastTokenEstimate(n) {
-  state.lastTokenEstimate = n;
+function getLastUserModel(sessionID = "default") {
+  return getSessionState(sessionID).lastUserModel;
 }
-var lastTriggeredAt = 0;
-function canTriggerCompaction(cooldownMs = 30000) {
+function setLastTokenEstimate(sessionID, n) {
+  getSessionState(sessionID).lastTokenEstimate = n;
+}
+var triggerCooldowns = new Map;
+function canTriggerCompaction(sessionID, cooldownMs = 30000) {
   const now = Date.now();
-  if (now - lastTriggeredAt < cooldownMs)
+  const lastTriggered = triggerCooldowns.get(sessionID) ?? 0;
+  if (now - lastTriggered < cooldownMs)
     return false;
-  lastTriggeredAt = now;
+  triggerCooldowns.set(sessionID, now);
   return true;
 }
-var compactionCooldownRemaining = 0;
-function startCompactionCooldown(turns = 3) {
-  compactionCooldownRemaining = Math.max(compactionCooldownRemaining, turns);
+var compactionCooldowns = new Map;
+function startCompactionCooldown(sessionID, turns = 3) {
+  const current = compactionCooldowns.get(sessionID) ?? 0;
+  compactionCooldowns.set(sessionID, Math.max(current, turns));
 }
-function decrementCompactionCooldown() {
-  if (compactionCooldownRemaining > 0)
-    compactionCooldownRemaining--;
+function decrementCompactionCooldown(sessionID) {
+  const current = compactionCooldowns.get(sessionID) ?? 0;
+  if (current > 0)
+    compactionCooldowns.set(sessionID, current - 1);
 }
-function isInCompactionCooldown() {
-  return compactionCooldownRemaining > 0;
+function isInCompactionCooldown(sessionID) {
+  return (compactionCooldowns.get(sessionID) ?? 0) > 0;
 }
-function getCompactionCooldownRemaining() {
-  return compactionCooldownRemaining;
+function getCompactionCooldownRemaining(sessionID) {
+  return compactionCooldowns.get(sessionID) ?? 0;
 }
 
 // src/compaction/signal-injector.ts
-function createCompactionInstruction() {
+function createCompactionInstruction(sessionID = "default") {
   const base = `\u2500\u2500 COMPACTION SIGNAL \u2500\u2500
 
 After completing a major work phase (issue done, research block finished, debug session closed), evaluate whether the session context would benefit from compaction. Output EXACTLY ONE of these signals at the end of your response:
@@ -458,10 +470,10 @@ RULES:
 - no_compact: during active debugging, open investigations, or when critical state is fragile
 - NEVER signal compact_now during an open debug session
 - safe_to_compact: list only completed/stale blocks (e.g. "issue_5_research, tool_logs_turn_10-20")`;
-  if (isInCompactionCooldown()) {
+  if (isInCompactionCooldown(sessionID)) {
     return base + `
 
-COMPACTION-COOLDOWN ACTIVE (${getCompactionCooldownRemaining()} turns remaining): A compaction was just triggered. Output \`no_compact\` unless a substantial NEW work block completed in this turn.`;
+COMPACTION-COOLDOWN ACTIVE (${getCompactionCooldownRemaining(sessionID)} turns remaining): A compaction was just triggered. Output \`no_compact\` unless a substantial NEW work block completed in this turn.`;
   }
   return base;
 }
@@ -471,7 +483,6 @@ function parseCompactionSignal(text) {
   const adviceMatch = text.match(/compaction_advice:\s*(no_compact|compact_soon|compact_now)/i);
   if (!adviceMatch)
     return null;
-  const n = text.length;
   if (adviceMatch.index !== undefined && adviceMatch.index < text.length - Math.max(300, Math.ceil(text.length * 0.2)))
     return null;
   const adviceRaw = adviceMatch[1].toLowerCase();
@@ -501,8 +512,8 @@ function createCompactionSignalHook(onSignal) {
       const signal = parseCompactionSignal(text);
       if (!signal)
         return;
-      setLastSignal(signal);
       const sid = props.sessionID || "";
+      setLastSignal(sid, signal);
       if (onSignal) {
         onSignal(signal, sid);
       }
@@ -569,9 +580,11 @@ function condenseIssueSlice(content, safeToCompact) {
   const now = new Date().toISOString().split("T")[0];
   return `Issue #${issueNr}: ${title} \u2014 COMPLETED (${now})`;
 }
-function applyPruning(layerContents, config = DEFAULT_CONFIG) {
-  const state2 = getCompactionState();
-  const signal = state2.lastSignal;
+function applyPruning(layerContents, config = {}) {
+  const cfg = { ...DEFAULT_CONFIG, ...config };
+  const sessionID = cfg.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default";
+  const state = getCompactionState(sessionID);
+  const signal = state.lastSignal;
   const stats = {
     originalLines: layerContents.reduce((sum, c) => sum + c.split(`
 `).length, 0),
@@ -581,19 +594,19 @@ function applyPruning(layerContents, config = DEFAULT_CONFIG) {
   };
   const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
   if (!triggered) {
-    if (!signal || signal.advice === "no_compact" || signal.safeToCompact.length < config.minCompletedBlocks) {
+    if (!signal || signal.advice === "no_compact" || signal.safeToCompact.length < cfg.minCompletedBlocks) {
       stats.prunedLines = stats.originalLines;
       return { contents: layerContents, stats };
     }
   }
   if (signal) {
-    const newBlocks = signal.safeToCompact.filter((b) => !wasAppliedPruning(b));
+    const newBlocks = signal.safeToCompact.filter((b) => !wasAppliedPruning(sessionID, b));
     if (newBlocks.length === 0 && !triggered) {
       stats.prunedLines = stats.originalLines;
       return { contents: layerContents, stats };
     }
   }
-  const truncated = layerContents.map((c) => truncateToolLogs(c, config.maxToolLogLines));
+  const truncated = layerContents.map((c) => truncateToolLogs(c, cfg.maxToolLogLines));
   const { contents: deduped, duplicatesRemoved } = deduplicateToolOutputs(truncated);
   stats.duplicatesRemoved = duplicatesRemoved;
   const safeToCompact = signal?.safeToCompact ?? [];
@@ -607,10 +620,10 @@ function applyPruning(layerContents, config = DEFAULT_CONFIG) {
 `).length, 0);
   if (signal) {
     for (const block of safeToCompact) {
-      markAppliedPruning(block);
+      markAppliedPruning(sessionID, block);
     }
   }
-  addEvent({
+  addEvent(sessionID, {
     ts: Date.now(),
     advice: signal?.advice ?? "triggered",
     reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
@@ -738,9 +751,10 @@ function extractSessionId(messages) {
   }
   return process.env.OPENDOC_SESSION_ID || process.env.SESSION_ID || "unknown";
 }
-function compactMessageHistory(messages) {
-  const state2 = getCompactionState();
-  const signal = state2.lastSignal;
+function compactMessageHistory(messages, sessionID) {
+  const sid = sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default";
+  const state = getCompactionState(sid);
+  const signal = state.lastSignal;
   const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
   if (!triggered && (!signal || signal.advice === "no_compact")) {
     return {
@@ -753,18 +767,8 @@ function compactMessageHistory(messages) {
       sessionId: extractSessionId(messages)
     };
   }
-  const newBlocks = signal ? signal.safeToCompact.filter((b) => !wasAppliedMessages(b)) : [];
-  if (signal && signal.safeToCompact.length > 0 && newBlocks.length === 0 && !triggered) {
-    return {
-      messagesBefore: messages.length,
-      messagesAfter: messages.length,
-      charsBefore: countChars(messages),
-      charsAfter: countChars(messages),
-      reductionPct: 0,
-      applied: false,
-      sessionId: extractSessionId(messages)
-    };
-  }
+  const newBlocks = signal ? signal.safeToCompact.filter((b) => !wasAppliedMessages(sid, b)) : [];
+  const skipBlockMarking = signal && signal.safeToCompact.length > 0 && newBlocks.length === 0 && !triggered;
   const charsBefore = countChars(messages);
   const messagesBefore = messages.length;
   const sessionId = extractSessionId(messages);
@@ -778,12 +782,12 @@ function compactMessageHistory(messages) {
   const charsAfter = countChars(messages);
   const messagesAfter = messages.length;
   const reductionPct = charsBefore > 0 ? Math.round((charsBefore - charsAfter) / charsBefore * 100) : 0;
-  if (signal) {
+  if (signal && !skipBlockMarking) {
     for (const block of signal.safeToCompact) {
-      markAppliedMessages(block);
+      markAppliedMessages(sid, block);
     }
   }
-  addEvent({
+  addEvent(sid, {
     ts: Date.now(),
     advice: signal?.advice ?? "triggered",
     reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
@@ -814,13 +818,14 @@ function compactMessageHistory(messages) {
     reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
     sessionId
   });
+  const didWork = removed > 0 || truncations > 0 || duplicates > 0;
   return {
     messagesBefore,
     messagesAfter,
     charsBefore,
     charsAfter,
     reductionPct,
-    applied: true,
+    applied: !skipBlockMarking || didWork,
     sessionId
   };
 }
@@ -906,7 +911,7 @@ async function triggerCompaction(client, sessionID, serverUrl) {
     hasRequest: isFn(internalClient?.["request"]),
     hasFetch: isFn(internalClient?.["fetch"])
   });
-  const lastModel = getLastUserModel();
+  const lastModel = getLastUserModel(sessionID);
   let providerID = lastModel.providerID;
   let modelID = lastModel.modelID;
   let source = "state";
@@ -1027,14 +1032,16 @@ async function triggerCompaction(client, sessionID, serverUrl) {
       const ok = await fn();
       logDebugEvent("compaction.trigger.candidate", { name, ok });
       if (ok) {
-        startCompactionCooldown(3);
+        startCompactionCooldown(sessionID, 3);
         return true;
       }
     } catch {
       logDebugEvent("compaction.trigger.candidate", { name, ok: false });
     }
   }
-  if (serverUrl) {
+  if (process.env.CC_ENABLE_HTTP_FALLBACK !== "true") {
+    logDebugEvent("compaction.trigger.http.disabled", { reason: "CC_ENABLE_HTTP_FALLBACK not set" });
+  } else if (serverUrl) {
     try {
       const url = `${serverUrl.replace(/\/+$/, "")}/api/session/${encodeURIComponent(sessionID)}/compact`;
       const response = await fetch(url, { method: "POST" });
@@ -1044,7 +1051,7 @@ async function triggerCompaction(client, sessionID, serverUrl) {
         ok: response.ok
       });
       if (response.ok) {
-        startCompactionCooldown(3);
+        startCompactionCooldown(sessionID, 3);
         return true;
       }
     } catch (e) {
@@ -1099,11 +1106,12 @@ var FourContextCuratorPlugin = async (ctx) => {
   const hookCtx = createHookContext(DEFAULT_LAYERS, layers);
   return {
     "experimental.chat.system.transform": async (_input, output) => {
+      const sessionID = _input?.sessionID ?? "default";
       const layerContents = await runLayerPipeline(hookCtx);
       logDebugEvent("compaction.system.transform", { layerCount: layerContents.length });
       if (layerContents.length > 0) {
         const sanitized = layerContents.map(sanitizeLayerContent);
-        const pruned = applyPruning(sanitized);
+        const pruned = applyPruning(sanitized, { sessionID });
         const prefix = [
           "\u2500\u2500 CONTEXT CURATOR (Layered Cacheable Prefixes) \u2500\u2500",
           ...pruned.contents
@@ -1112,11 +1120,11 @@ var FourContextCuratorPlugin = async (ctx) => {
 `);
         output.system.push(prefix);
       }
-      output.system.push(createCompactionInstruction());
+      output.system.push(createCompactionInstruction(sessionID));
     },
     event: createCompactionSignalHook((signal, sessionID) => {
-      decrementCompactionCooldown();
-      if (isInCompactionCooldown()) {
+      decrementCompactionCooldown(sessionID);
+      if (isInCompactionCooldown(sessionID)) {
         try {
           (async () => {
             const { writeDiaryEntry: writeDiaryEntry2 } = await Promise.resolve().then(() => (init_diary(), exports_diary));
@@ -1154,7 +1162,7 @@ var FourContextCuratorPlugin = async (ctx) => {
           });
         })().catch(() => {});
       } catch {}
-      if (signal.advice === "compact_now" && sessionID && canTriggerCompaction() && signal.safeToCompact.length > 0) {
+      if (signal.advice === "compact_now" && sessionID && canTriggerCompaction(sessionID) && signal.safeToCompact.length > 0) {
         const sid = sessionID;
         const serverUrlStr = ctx.serverUrl?.toString();
         if (!serverUrlStr) {
@@ -1175,8 +1183,9 @@ var FourContextCuratorPlugin = async (ctx) => {
     }),
     "experimental.session.compacting": async (input, output) => {
       try {
-        const state2 = getCompactionState();
-        const signal = state2.lastSignal;
+        const sessionID = input?.sessionID ?? "default";
+        const state = getCompactionState(sessionID);
+        const signal = state.lastSignal;
         const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
         process.env.CC_COMPACTION_TRIGGER = "true";
         logDebugEvent("compaction.compacting", {
@@ -1213,13 +1222,14 @@ var FourContextCuratorPlugin = async (ctx) => {
     },
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
+        const sessionID = _input?.sessionID ?? "default";
         logDebugEvent("compaction.messages.transform", { messageCount: output.messages.length });
-        compactMessageHistory(output.messages);
+        compactMessageHistory(output.messages, sessionID);
         let totalTokens = 0;
         for (const m of output.messages) {
           totalTokens += estimateMessageTokens(m);
         }
-        setLastTokenEstimate(totalTokens);
+        setLastTokenEstimate(sessionID, totalTokens);
         logDebugEvent("compaction.tokens.estimated", { totalTokens, messageCount: output.messages.length });
         let lastUserMsg;
         for (let i = output.messages.length - 1;i >= 0; i--) {
@@ -1249,7 +1259,7 @@ var FourContextCuratorPlugin = async (ctx) => {
               path = "info.model";
             }
             if (path) {
-              setLastUserModel(providerID, modelID);
+              setLastUserModel(sessionID, providerID, modelID);
               logDebugEvent("compaction.user_model.updated", { providerID, modelID, path });
             } else {
               logDebugEvent("compaction.user_model.shape_unknown", { keys: Object.keys(info) });
@@ -1273,7 +1283,7 @@ var FourContextCuratorPlugin = async (ctx) => {
             logDebugEvent("compaction.guard.placeholder_injected", { partCount: m.parts.length });
           }
         }
-        clearSignal();
+        clearSignal(sessionID);
       } catch {} finally {
         delete process.env.CC_COMPACTION_TRIGGER;
       }

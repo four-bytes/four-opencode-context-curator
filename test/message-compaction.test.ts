@@ -76,30 +76,30 @@ describe("deduplicateMessageParts", () => {
 
 describe("compactMessageHistory", () => {
   afterEach(() => {
-    clearSignal();
-    getCompactionState().appliedFor.clear();
+    clearSignal("test");
+    getCompactionState("test").appliedFor.clear();
   });
 
   it("no-op when no signal", () => {
     const messages: MessageItem[] = [makeMsg([makeTextPart("hello")])];
-    const result = compactMessageHistory(messages);
+    const result = compactMessageHistory(messages, "test");
     expect(result.applied).toBe(false);
     expect(result.charsBefore).toBe(result.charsAfter);
   });
 
   it("no-op when no_compact signal", () => {
-    setLastSignal({
+    setLastSignal("test", {
       advice: "no_compact",
       reason: "debugging",
       safeToCompact: ["block1"],
     });
     const messages: MessageItem[] = [makeMsg([makeTextPart("hello")])];
-    const result = compactMessageHistory(messages);
+    const result = compactMessageHistory(messages, "test");
     expect(result.applied).toBe(false);
   });
 
   it("applies compaction with compact_now signal and long messages", () => {
-    setLastSignal({
+    setLastSignal("test", {
       advice: "compact_now",
       reason: "session cleanup",
       safeToCompact: ["block_old_logs"],
@@ -109,7 +109,7 @@ describe("compactMessageHistory", () => {
       makeMsg([makeTextPart(longText)]),
       makeMsg([makeTextPart(longText)]),
     ];
-    const result = compactMessageHistory(messages);
+    const result = compactMessageHistory(messages, "test");
     expect(result.applied).toBe(true);
     expect(result.charsAfter).toBeLessThan(result.charsBefore);
     expect(result.reductionPct).toBeGreaterThan(0);
@@ -121,19 +121,19 @@ describe("compactMessageHistory", () => {
       reason: "done",
       safeToCompact: ["block1"],
     };
-    setLastSignal(signal);
+    setLastSignal("test", signal);
     const messages: MessageItem[] = [makeMsg([makeTextPart("content")])];
 
-    const first = compactMessageHistory(messages);
+    const first = compactMessageHistory(messages, "test");
     expect(first.applied).toBe(true);
 
-    setLastSignal(signal);
-    const second = compactMessageHistory(messages);
+    setLastSignal("test", signal);
+    const second = compactMessageHistory(messages, "test");
     expect(second.applied).toBe(false);
   });
 
   it("drops old messages on compact_now (aggressive)", () => {
-    setLastSignal({
+    setLastSignal("test", {
       advice: "compact_now",
       reason: "session too large",
       safeToCompact: ["block_trim"],
@@ -142,7 +142,7 @@ describe("compactMessageHistory", () => {
     const messages: MessageItem[] = Array.from({ length: 25 }, (_, i) =>
       makeMsg([makeTextPart(`message ${i + 1}`)]),
     );
-    const result = compactMessageHistory(messages);
+    const result = compactMessageHistory(messages, "test");
     expect(result.applied).toBe(true);
     expect(messages.length).toBe(15); // 25 - 10 dropped
     expect(result.messagesBefore).toBe(25);
@@ -151,7 +151,7 @@ describe("compactMessageHistory", () => {
   });
 
   it("does not drop messages on compact_soon", () => {
-    setLastSignal({
+    setLastSignal("test", {
       advice: "compact_soon",
       reason: "growing but ok",
       safeToCompact: ["block1"],
@@ -159,13 +159,13 @@ describe("compactMessageHistory", () => {
     const messages: MessageItem[] = Array.from({ length: 20 }, (_, i) =>
       makeMsg([makeTextPart(`msg ${i}`)]),
     );
-    const result = compactMessageHistory(messages);
+    const result = compactMessageHistory(messages, "test");
     expect(result.applied).toBe(true);
     expect(messages.length).toBe(20); // No dropping on compact_soon
   });
 
   it("compact_now with empty safe_to_compact still drops to KEEP_RECENT", () => {
-    setLastSignal({
+    setLastSignal("test", {
       advice: "compact_now",
       reason: "test",
       safeToCompact: [],
@@ -173,13 +173,13 @@ describe("compactMessageHistory", () => {
     const messages: MessageItem[] = Array.from({ length: 25 }, (_, i) =>
       makeMsg([makeTextPart(`message ${i + 1}`)]),
     );
-    const result = compactMessageHistory(messages);
+    const result = compactMessageHistory(messages, "test");
     expect(result.applied).toBe(true);
     expect(messages.length).toBe(15);
   });
 
   it("compact_soon with empty safe_to_compact truncates but does not drop", () => {
-    setLastSignal({
+    setLastSignal("test", {
       advice: "compact_soon",
       reason: "test",
       safeToCompact: [],
@@ -187,7 +187,7 @@ describe("compactMessageHistory", () => {
     const messages: MessageItem[] = Array.from({ length: 20 }, (_, i) =>
       makeMsg([makeTextPart(`msg ${i}`)]),
     );
-    const result = compactMessageHistory(messages);
+    const result = compactMessageHistory(messages, "test");
     expect(result.applied).toBe(true);
     expect(messages.length).toBe(20);
   });

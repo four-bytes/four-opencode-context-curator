@@ -76,30 +76,30 @@ describe("condenseIssueSlice", () => {
 describe("applyPruning", () => {
   afterEach(() => {
     // Reset state between tests
-    clearSignal();
-    getCompactionState().appliedFor.clear();
+    clearSignal("test");
+    getCompactionState("test").appliedFor.clear();
   });
 
   it("no-op when no signal set", () => {
     const input = ["content A", "content B"];
-    const { contents, stats } = applyPruning(input);
+    const { contents, stats } = applyPruning(input, { sessionID: "test" });
     expect(contents).toEqual(input);
     expect(stats.originalLines).toBe(stats.prunedLines);
   });
 
   it("no-op when signal is no_compact", () => {
-    setLastSignal({
+    setLastSignal("test", {
       advice: "no_compact",
       reason: "debugging",
       safeToCompact: ["issue_5"],
     });
     const input = ["content"];
-    const { contents } = applyPruning(input);
+    const { contents } = applyPruning(input, { sessionID: "test" });
     expect(contents).toEqual(input);
   });
 
   it("applies pruning when compact_now with valid blocks", () => {
-    setLastSignal({
+    setLastSignal("test", {
       advice: "compact_now",
       reason: "issue done",
       safeToCompact: ["issue_5_research"],
@@ -108,7 +108,7 @@ describe("applyPruning", () => {
       'ACTIVE ISSUE: #5\n{"title":"Test issue","number":5}',
       Array(100).fill("log line").join("\n"),
     ];
-    const { contents, stats } = applyPruning(input);
+    const { contents, stats } = applyPruning(input, { sessionID: "test" });
     expect(stats.blocksCondensed).toBeGreaterThan(0);
     expect(stats.prunedLines).toBeLessThan(stats.originalLines);
   });
@@ -119,16 +119,16 @@ describe("applyPruning", () => {
       reason: "done",
       safeToCompact: ["issue_5"],
     };
-    setLastSignal(signal);
+    setLastSignal("test", signal);
     const input = ["some content"];
-    
+
     // First application
-    const first = applyPruning(input);
+    const first = applyPruning(input, { sessionID: "test" });
     expect(first.stats.blocksCondensed + first.stats.duplicatesRemoved).toBeGreaterThanOrEqual(0);
-    
+
     // Reset signal for second attempt
-    setLastSignal(signal);
-    const second = applyPruning(input);
+    setLastSignal("test", signal);
+    const second = applyPruning(input, { sessionID: "test" });
     // Second should be no-op since blocks already applied
     expect(second.contents).toEqual(input);
   });

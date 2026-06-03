@@ -49,12 +49,13 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
 
   return {
     "experimental.chat.system.transform": async (_input, output) => {
+      const sessionID = (_input as any)?.sessionID ?? "default";
       const layerContents = await runLayerPipeline(hookCtx);
       logDebugEvent("compaction.system.transform", { layerCount: layerContents.length });
 
       if (layerContents.length > 0) {
         const sanitized = layerContents.map(sanitizeLayerContent);
-        const pruned = applyPruning(sanitized);
+        const pruned = applyPruning(sanitized, { sessionID });
         const prefix = [
           "── CONTEXT CURATOR (Layered Cacheable Prefixes) ──",
           ...pruned.contents,
@@ -62,14 +63,14 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         output.system.push(prefix);
       }
 
-      output.system.push(createCompactionInstruction());
+      output.system.push(createCompactionInstruction(sessionID));
     },
     event: createCompactionSignalHook((signal, sessionID) => {
       // Decrement compaction cooldown once per assistant message turn
-      decrementCompactionCooldown();
+      decrementCompactionCooldown(sessionID);
 
       // If cooldown active, downgrade compact_now to no_compact (prevent double-trigger)
-      if (isInCompactionCooldown()) {
+      if (isInCompactionCooldown(sessionID)) {
         try {
           (async () => {
             const { writeDiaryEntry } = await import("./compaction/diary.js");
@@ -111,7 +112,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       } catch {}
 
       // Only trigger actual compaction for compact_now with a valid session
-      if (signal.advice === "compact_now" && sessionID && canTriggerCompaction() && signal.safeToCompact.length > 0) {
+      if (signal.advice === "compact_now" && sessionID && canTriggerCompaction(sessionID) && signal.safeToCompact.length > 0) {
         const sid = sessionID;
         const serverUrlStr = ctx.serverUrl?.toString();
         if (!serverUrlStr) {
@@ -133,7 +134,8 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
     }),
     "experimental.session.compacting": async (input, output) => {
       try {
-        const state = getCompactionState();
+        const sessionID = (input as any)?.sessionID ?? "default";
+        const state = getCompactionState(sessionID);
         const signal = state.lastSignal;
         const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
 
@@ -184,12 +186,14 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
     },
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
+        const sessionID = (_input as any)?.sessionID ?? "default";
         logDebugEvent("compaction.messages.transform", { messageCount: output.messages.length });
         compactMessageHistory(
           output.messages as Array<{
             info: { role?: string };
             parts: Array<{ type: string; text?: string }>;
           }>,
+          sessionID,
         );
 
         // Estimate total tokens after compaction
@@ -197,7 +201,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         for (const m of output.messages) {
           totalTokens += estimateMessageTokens(m);
         }
-        setLastTokenEstimate(totalTokens);
+        setLastTokenEstimate(sessionID, totalTokens);
         logDebugEvent("compaction.tokens.estimated", { totalTokens, messageCount: output.messages.length });
 
         // Derive provider/model from last user message for summarize candidate
@@ -239,7 +243,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
               path = "info.model";
             }
             if (path) {
-              setLastUserModel(providerID, modelID);
+              setLastUserModel(sessionID, providerID, modelID);
               logDebugEvent("compaction.user_model.updated", { providerID, modelID, path });
             } else {
               logDebugEvent("compaction.user_model.shape_unknown", { keys: Object.keys(info) });
@@ -272,7 +276,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         }
 
         // Clear signal after both transforms have had their chance
-        clearSignal();
+        clearSignal(sessionID);
       } catch {
         // Non-blocking
       } finally {

@@ -25,8 +25,8 @@ describe("Compaction Integration", () => {
   });
 
   afterEach(() => {
-    clearSignal();
-    getCompactionState().appliedFor.clear();
+    clearSignal("test");
+    getCompactionState("test").appliedFor.clear();
   });
 
   afterAll(() => {
@@ -34,7 +34,7 @@ describe("Compaction Integration", () => {
   });
 
   it("writes diary entry after pruning", () => {
-    setLastSignal({
+    setLastSignal("test", {
       advice: "compact_now",
       reason: "multi-turn test",
       safeToCompact: ["issue_99"],
@@ -45,7 +45,7 @@ describe("Compaction Integration", () => {
       Array(100).fill("repeated log line").join("\n"),
     ];
 
-    applyPruning(input);
+    applyPruning(input, { sessionID: "test" });
 
     // Check diary file was written
     expect(existsSync(diaryPath)).toBe(true);
@@ -57,7 +57,7 @@ describe("Compaction Integration", () => {
 
   it("multi-turn simulation: signal → compact → verify reduction", () => {
     // Turn 1: Signal received
-    setLastSignal({
+    setLastSignal("test", {
       advice: "compact_now",
       reason: "issue 42 complete",
       safeToCompact: ["issue_42"],
@@ -73,7 +73,7 @@ describe("Compaction Integration", () => {
 
     const originalLines = layerContents.reduce((sum, c) => sum + c.split("\n").length, 0);
 
-    const { contents, stats } = applyPruning(layerContents);
+    const { contents, stats } = applyPruning(layerContents, { sessionID: "test" });
 
     // Should have condensed the issue
     expect(contents.some((c) => c.includes("COMPLETED"))).toBe(true);
@@ -120,7 +120,7 @@ describe("Compaction Integration", () => {
       },
     });
 
-    const state = getCompactionState();
+    const state = getCompactionState("session-integration");
     expect(state.lastSignal).not.toBeNull();
     expect(state.lastSignal!.advice).toBe("compact_now");
     expect(state.lastSignal!.reason).toBe("integration test complete, logs accumulated");
@@ -132,7 +132,7 @@ describe("Compaction Integration", () => {
       Array(100).fill("repeated log line").join("\n"),
     ];
 
-    applyPruning(input);
+    applyPruning(input, { sessionID: "session-integration" });
 
     // Verify diary was written
     const diaryPath = join(CACHE_DIR, `compaction-events-${new Date().toISOString().split("T")[0]}.jsonl`);
@@ -148,7 +148,7 @@ describe("Compaction Integration", () => {
 
     try { unlinkSync(diaryPath); } catch {}
 
-    applyPruning(input);
+    applyPruning(input, { sessionID: "test" });
 
     // Diary should NOT be created (or be empty) for no-op
     if (existsSync(diaryPath)) {
@@ -159,7 +159,7 @@ describe("Compaction Integration", () => {
 
   it("trigger-only compactMessageHistory applies generic heuristics", async () => {
     process.env.CC_COMPACTION_TRIGGER = "true";
-    clearSignal();
+    clearSignal("test");
 
     const messages = [
       { info: { role: "user" }, parts: [{ type: "text", text: "hello" }] },
@@ -167,7 +167,7 @@ describe("Compaction Integration", () => {
       { info: { role: "user" }, parts: [{ type: "text", text: Array(80).fill("log").join("\n") }] },
     ];
 
-    const result = compactMessageHistory(messages);
+    const result = compactMessageHistory(messages, "test");
 
     // Should have applied (triggered=true)
     expect(result.applied).toBe(true);
@@ -175,6 +175,6 @@ describe("Compaction Integration", () => {
     expect(result.charsAfter).toBeLessThan(result.charsBefore);
 
     delete process.env.CC_COMPACTION_TRIGGER;
-    clearSignal();
+    clearSignal("test");
   });
 });
