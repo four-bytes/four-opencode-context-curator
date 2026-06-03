@@ -104,9 +104,6 @@ export function setLastUserModel(sessionID: string, providerID: string | undefin
   getSessionState(sessionID).lastUserModel = { providerID, modelID };
 }
 
-export function getLastUserModel(sessionID: string = "default"): LastUserModel {
-  return getSessionState(sessionID).lastUserModel;
-}
 
 export function setLastTokenEstimate(sessionID: string, n: number): void {
   getSessionState(sessionID).lastTokenEstimate = n;
@@ -128,10 +125,6 @@ export function canTriggerCompaction(sessionID: string, cooldownMs: number = 300
 
 const compactionCooldowns = new Map<string, number>();
 
-export function startCompactionCooldown(sessionID: string, turns: number = 3): void {
-  const current = compactionCooldowns.get(sessionID) ?? 0;
-  compactionCooldowns.set(sessionID, Math.max(current, turns));
-}
 
 export function decrementCompactionCooldown(sessionID: string): void {
   const current = compactionCooldowns.get(sessionID) ?? 0;

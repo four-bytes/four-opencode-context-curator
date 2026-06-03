@@ -1,6 +1,13 @@
 # Project Change History
 
 ## [Unreleased]
+## [0.4.0] - 2026-06-04
+
+### Removed
+- `triggerCompaction` Funktion und `src/compaction/trigger.ts` entfernt — 6 HTTP-basierte Kandidaten + HTTP-Fallback tot im TUI-Mode (kein HTTP-Server). Lokale Compaction (messages.transform, applyPruning) funktioniert bereits. Persistente Compaction übernimmt opencodes Overflow-Detection (#100)
+- `test/compaction-trigger.test.ts` entfernt
+- `getLastUserModel` und `startCompactionCooldown` aus state.ts entfernt (nur von trigger.ts genutzt)
+
 ## [0.3.18] - 2026-06-04
 
 ### Changed
