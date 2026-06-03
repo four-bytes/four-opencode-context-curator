@@ -1,6 +1,10 @@
 # Project Change History
 
 ## [Unreleased]
+## [0.3.18] - 2026-06-04
+
+### Changed
+- AGENTS.md: Build-Disziplin dokumentiert (Version-Bump + bun run build Pflicht)
 
 ## [0.3.17] - 2026-06-04
 
