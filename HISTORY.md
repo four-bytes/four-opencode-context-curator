@@ -1,5 +1,16 @@
 # Project Change History
 
+## [0.3.11] - 2026-06-03
+
+### Added
+- 5-second cooldown mutex between compaction triggers via canTriggerCompaction() in src/state.ts:90 (#77)
+- End-of-text guard in src/compaction/signal-parser.ts:13-14 — compaction_advice signal must appear in last 20% / 300 chars of message to count (#79)
+- safeToCompact.length > 0 validation in src/four-opencode-context-curator.ts:87 before firing trigger (#79)
+- ISSUES.md postmortem for 2026-06-03 compaction self-trigger infinite loop
+
+### Fixed
+- Compaction self-trigger infinite loop with 570+ triggers per minute and removed=0. Root cause was that parseCompactionSignal matched the literal advice pattern anywhere in message text, including LLM-echoed system rules. Three layered guards are now active: end-of-text position check, safeToCompact non-empty check, and 5-second cooldown mutex.
+
 ## [0.3.10] - 2026-06-02
 
 ### Changed
