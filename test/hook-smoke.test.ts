@@ -35,7 +35,7 @@ describe("Hook Pipeline", () => {
 
 describe("updateModel", () => {
   afterEach(() => {
-    clearSignal();
+    clearSignal("test");
   });
 
   it("detects info.model.providerID + info.model.modelID", async () => {
@@ -51,7 +51,7 @@ describe("updateModel", () => {
     const transform = hooks["experimental.chat.messages.transform"];
     expect(transform).toBeDefined();
 
-    await transform!({}, {
+    await transform!({ sessionID: "test" }, {
       messages: [
         {
           info: { role: "user" },
@@ -67,7 +67,7 @@ describe("updateModel", () => {
       ],
     });
 
-    const model = getLastUserModel();
+    const model = getLastUserModel("test");
     expect(model.providerID).toBe("openai");
     expect(model.modelID).toBe("gpt-4");
   });

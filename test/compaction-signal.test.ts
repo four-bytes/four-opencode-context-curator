@@ -86,7 +86,7 @@ safe_to_compact: issue_5_research, tool_logs_turn_10-20
 
 describe("createCompactionSignalHook (event-based)", () => {
   afterEach(() => {
-    clearSignal();
+    clearSignal("session-abc");
   });
 
   it("parses compact_now from message.part.updated event and calls onSignal", async () => {
@@ -121,7 +121,7 @@ describe("createCompactionSignalHook (event-based)", () => {
       },
     });
 
-    const state = getCompactionState();
+    const state = getCompactionState("session-abc");
     expect(state.lastSignal).not.toBeNull();
     expect(state.lastSignal!.advice).toBe("compact_now");
     expect(state.lastSignal!.reason).toBe("Issue #5 research complete");
@@ -142,7 +142,7 @@ describe("createCompactionSignalHook (event-based)", () => {
     });
 
     expect(fired).toBe(false);
-    expect(getCompactionState().lastSignal).toBeNull();
+    expect(getCompactionState("s1").lastSignal).toBeNull();
   });
 
   it("ignores non-text parts", async () => {
@@ -169,7 +169,7 @@ describe("createCompactionSignalHook (event-based)", () => {
     });
 
     expect(fired).toBe(false);
-    expect(getCompactionState().lastSignal).toBeNull();
+    expect(getCompactionState("s1").lastSignal).toBeNull();
   });
 
   it("ignores text without compaction signal", async () => {
@@ -194,7 +194,7 @@ describe("createCompactionSignalHook (event-based)", () => {
     });
 
     expect(fired).toBe(false);
-    expect(getCompactionState().lastSignal).toBeNull();
+    expect(getCompactionState("s1").lastSignal).toBeNull();
   });
 
   it("never throws on malformed input", async () => {
@@ -207,6 +207,6 @@ describe("createCompactionSignalHook (event-based)", () => {
     await hook({ event: {} } as never);
     await hook({} as never);
 
-    expect(getCompactionState().lastSignal).toBeNull();
+    expect(getCompactionState("default").lastSignal).toBeNull();
   });
 });

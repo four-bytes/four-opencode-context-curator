@@ -66,7 +66,7 @@ export async function triggerCompaction(
     hasFetch: isFn(internalClient?.["fetch"]),
   });
 
-  const lastModel = getLastUserModel();
+  const lastModel = getLastUserModel(sessionID);
   let providerID = lastModel.providerID;
   let modelID = lastModel.modelID;
   let source: "state" | "env" | "none" = "state";
@@ -185,7 +185,7 @@ export async function triggerCompaction(
     try {
       const ok = await fn();
       logDebugEvent("compaction.trigger.candidate", { name, ok });
-      if (ok) { startCompactionCooldown(3); return true; }
+      if (ok) { startCompactionCooldown(sessionID, 3); return true; }
     } catch {
       logDebugEvent("compaction.trigger.candidate", { name, ok: false });
       // weiter
@@ -193,7 +193,10 @@ export async function triggerCompaction(
   }
 
   // HTTP-Fallback: POST /api/session/{sessionID}/compact via fetch (Bun built-in)
-  if (serverUrl) {
+  // Disabled by default in TUI mode (no TCP listener). Enable via CC_ENABLE_HTTP_FALLBACK=true
+  if (process.env.CC_ENABLE_HTTP_FALLBACK !== "true") {
+    logDebugEvent("compaction.trigger.http.disabled", { reason: "CC_ENABLE_HTTP_FALLBACK not set" });
+  } else if (serverUrl) {
     try {
       const url = `${serverUrl.replace(/\/+$/, "")}/api/session/${encodeURIComponent(sessionID)}/compact`;
       const response = await fetch(url, { method: "POST" });
@@ -202,7 +205,7 @@ export async function triggerCompaction(
         status: response.status,
         ok: response.ok,
       });
-      if (response.ok) { startCompactionCooldown(3); return true; }
+      if (response.ok) { startCompactionCooldown(sessionID, 3); return true; }
     } catch (e) {
       logDebugEvent("compaction.trigger.http.error", {
         url: `${serverUrl.replace(/\/+$/, "")}/api/session/${encodeURIComponent(sessionID)}/compact`,

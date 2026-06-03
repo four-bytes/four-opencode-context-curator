@@ -113,7 +113,7 @@ test("calls v2.session.compact as primary candidate", async () => {
 test("trigger-only mode (no signal) applies generic pruning", async () => {
   // Set trigger but no signal
   process.env.CC_COMPACTION_TRIGGER = "true";
-  clearSignal();
+  clearSignal("test");
 
   const { applyPruning } = await import("../src/compaction/pruning-engine.js");
   const longText = Array(100).fill("repeated debug line").join("\n");
@@ -123,7 +123,7 @@ test("trigger-only mode (no signal) applies generic pruning", async () => {
   ];
 
   const originalLines = input.reduce((sum, c) => sum + c.split("\n").length, 0);
-  const { contents, stats } = applyPruning(input);
+  const { contents, stats } = applyPruning(input, { sessionID: "test" });
 
   // Should have applied truncation (longText > 50 lines)
   expect(stats.prunedLines).toBeLessThan(originalLines);
@@ -131,5 +131,5 @@ test("trigger-only mode (no signal) applies generic pruning", async () => {
   expect(contents.some((c: string) => c.includes("COMPLETED"))).toBe(false);
 
   delete process.env.CC_COMPACTION_TRIGGER;
-  clearSignal();
+  clearSignal("test");
 });

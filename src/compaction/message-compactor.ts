@@ -93,8 +93,9 @@ function extractSessionId(messages: MessageItem[]): string {
  * On compact_now: keeps only last KEEP_RECENT messages + truncates + deduplicates.
  * On compact_soon: truncates + deduplicates only, no message removal.
  */
-export function compactMessageHistory(messages: MessageItem[]): CompactionResult {
-  const state = getCompactionState();
+export function compactMessageHistory(messages: MessageItem[], sessionID?: string): CompactionResult {
+  const sid = sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default";
+  const state = getCompactionState(sid);
   const signal = state.lastSignal;
 
   const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
@@ -113,18 +114,8 @@ export function compactMessageHistory(messages: MessageItem[]): CompactionResult
 
   // In trigger-only mode (no signal), still apply generic pruning
   // but skip block-based condensing
-  const newBlocks = signal ? signal.safeToCompact.filter((b) => !wasAppliedMessages(b)) : [];
-  if (signal && signal.safeToCompact.length > 0 && newBlocks.length === 0 && !triggered) {
-    return {
-      messagesBefore: messages.length,
-      messagesAfter: messages.length,
-      charsBefore: countChars(messages),
-      charsAfter: countChars(messages),
-      reductionPct: 0,
-      applied: false,
-      sessionId: extractSessionId(messages),
-    };
-  }
+  const newBlocks = signal ? signal.safeToCompact.filter((b) => !wasAppliedMessages(sid, b)) : [];
+  const skipBlockMarking = signal && signal.safeToCompact.length > 0 && newBlocks.length === 0 && !triggered;
 
   const charsBefore = countChars(messages);
   const messagesBefore = messages.length;
@@ -151,15 +142,15 @@ export function compactMessageHistory(messages: MessageItem[]): CompactionResult
       ? Math.round(((charsBefore - charsAfter) / charsBefore) * 100)
       : 0;
 
-  // Mark blocks as applied (skip in trigger-only mode)
-  if (signal) {
+  // Mark blocks as applied (skip if all blocks already applied, or in trigger-only mode)
+  if (signal && !skipBlockMarking) {
     for (const block of signal.safeToCompact) {
-      markAppliedMessages(block);
+      markAppliedMessages(sid, block);
     }
   }
 
   // Record event
-  addEvent({
+  addEvent(sid, {
     ts: Date.now(),
     advice: signal?.advice ?? "triggered",
     reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
@@ -194,13 +185,15 @@ export function compactMessageHistory(messages: MessageItem[]): CompactionResult
     sessionId,
   });
 
+  const didWork = removed > 0 || truncations > 0 || duplicates > 0;
+
   return {
     messagesBefore,
     messagesAfter,
     charsBefore,
     charsAfter,
     reductionPct,
-    applied: true,
+    applied: !skipBlockMarking || didWork,
     sessionId,
   };
 }

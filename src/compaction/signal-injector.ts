@@ -1,6 +1,6 @@
 import { isInCompactionCooldown, getCompactionCooldownRemaining } from "./state.js";
 
-export function createCompactionInstruction(): string {
+export function createCompactionInstruction(sessionID: string = "default"): string {
   const base = `── COMPACTION SIGNAL ──
 
 After completing a major work phase (issue done, research block finished, debug session closed), evaluate whether the session context would benefit from compaction. Output EXACTLY ONE of these signals at the end of your response:
@@ -22,8 +22,8 @@ RULES:
 - NEVER signal compact_now during an open debug session
 - safe_to_compact: list only completed/stale blocks (e.g. "issue_5_research, tool_logs_turn_10-20")`;
 
-  if (isInCompactionCooldown()) {
-    return base + `\n\nCOMPACTION-COOLDOWN ACTIVE (${getCompactionCooldownRemaining()} turns remaining): A compaction was just triggered. Output \`no_compact\` unless a substantial NEW work block completed in this turn.`;
+  if (isInCompactionCooldown(sessionID)) {
+    return base + `\n\nCOMPACTION-COOLDOWN ACTIVE (${getCompactionCooldownRemaining(sessionID)} turns remaining): A compaction was just triggered. Output \`no_compact\` unless a substantial NEW work block completed in this turn.`;
   }
   return base;
 }
