@@ -3,7 +3,7 @@
 ## [0.3.11] - 2026-06-03
 
 ### Added
-- 5-second cooldown mutex between compaction triggers via canTriggerCompaction() in src/state.ts:90 (#75)
+- 5-second cooldown mutex between compaction triggers via canTriggerCompaction() in src/state.ts:90 (#77)
 - End-of-text guard in src/compaction/signal-parser.ts:13-14 — compaction_advice signal must appear in last 20% / 300 chars of message to count (#79)
 - safeToCompact.length > 0 validation in src/four-opencode-context-curator.ts:87 before firing trigger (#79)
 - ISSUES.md postmortem for 2026-06-03 compaction self-trigger infinite loop
