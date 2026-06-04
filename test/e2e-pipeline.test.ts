@@ -51,9 +51,9 @@ describe("E2E Harness Smoke Test", () => {
   });
 
   it("mock client session.summarize is callable", async () => {
-    await mockClient.session.summarize({ sessionID: "e2e" });
+    await mockClient.session.summarize({ path: { id: "e2e" }, query: { directory: process.cwd() } });
     expect(mockSummarize).toHaveBeenCalledTimes(1);
-    expect(mockSummarize).toHaveBeenCalledWith({ sessionID: "e2e" });
+    expect(mockSummarize).toHaveBeenCalledWith({ path: { id: "e2e" }, query: { directory: process.cwd() } });
   });
   it("system.transform returns global rules + compaction layer", async () => {
     const input = { sessionID: "e2e" };
@@ -81,6 +81,9 @@ describe("E2E Harness Smoke Test", () => {
     expect(output.messages[1].parts[0].text).toBe("Hi there");
     expect(output.messages[1].parts[0].text).not.toContain("compaction_advice");
     expect(mockSummarize).toHaveBeenCalledTimes(1);
+    const callArg = mockSummarize.mock.calls[0][0];
+    expect(callArg.path.id).toBe("e2e");
+    expect(callArg.query.directory).toBeDefined();
   });
 
   it("injects placeholder when assistant message is only a compaction signal", async () => {
