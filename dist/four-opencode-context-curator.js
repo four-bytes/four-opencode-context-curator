@@ -647,6 +647,8 @@ function countChars(messages) {
 function truncateMessageParts(messages) {
   let truncations = 0;
   for (const msg of messages) {
+    if (msg.info.role === "user")
+      continue;
     for (const part of msg.parts) {
       if (part.type === "text" && part.text) {
         const lines = part.text.split(`
@@ -670,6 +672,8 @@ function deduplicateMessageParts(messages) {
   let duplicates = 0;
   for (let msgIdx = 0;msgIdx < messages.length; msgIdx++) {
     const msg = messages[msgIdx];
+    if (msg.info.role === "user")
+      continue;
     for (const part of msg.parts) {
       if (part.type === "text" && part.text && part.text.length > 20) {
         const hash = simpleHash2(part.text);
@@ -715,8 +719,18 @@ function compactMessageHistory(messages, sessionID) {
   const sessionId = extractSessionId(messages);
   let removed = 0;
   if ((signal?.advice === "compact_now" || triggered) && messages.length > KEEP_RECENT) {
-    removed = messages.length - KEEP_RECENT;
-    messages.splice(0, removed);
+    const toRemove = messages.length - KEEP_RECENT;
+    let removedCount = 0;
+    let idx = 0;
+    while (removedCount < toRemove && idx < messages.length) {
+      if (messages[idx].info.role !== "user") {
+        messages.splice(idx, 1);
+        removedCount++;
+      } else {
+        idx++;
+      }
+    }
+    removed = removedCount;
   }
   const truncations = truncateMessageParts(messages);
   const duplicates = deduplicateMessageParts(messages);
