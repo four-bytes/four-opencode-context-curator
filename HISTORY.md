@@ -24,7 +24,11 @@
 - Remove dead imports `isInCompactionCooldown`, `decrementCompactionCooldown` aus `four-opencode-context-curator.ts`
 - Remove dead code `createCompactionSignalHook`, `CompactionSignalCallback`, `TextPartPayload`, `PartUpdatedEvent` aus `signal-parser.ts`
 
-## [Unreleased]
+## [0.6.7] - 2026-06-04
+
+### Fixed
+- Message-Compactor zerstört nicht mehr Subagent-Input-Messages: `truncateMessageParts` und `deduplicateMessageParts` überspringen jetzt User-Messages (enthalten Task-Prompts/Instructions), Drop-Logik in `compactMessageHistory` bewahrt User-Messages beim Entfernen alter Nachrichten
+
 ## [0.4.0] - 2026-06-04
 
 ### Removed

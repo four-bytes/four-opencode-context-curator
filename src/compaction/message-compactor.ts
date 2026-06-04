@@ -42,6 +42,8 @@ function countChars(messages: MessageItem[]): number {
 export function truncateMessageParts(messages: MessageItem[]): number {
   let truncations = 0;
   for (const msg of messages) {
+    // NEVER truncate user messages — they contain task prompts/instructions
+    if (msg.info.role === "user") continue;
     for (const part of msg.parts) {
       if (part.type === "text" && part.text) {
         const lines = part.text.split("\n");
@@ -64,6 +66,8 @@ export function deduplicateMessageParts(messages: MessageItem[]): number {
   let duplicates = 0;
   for (let msgIdx = 0; msgIdx < messages.length; msgIdx++) {
     const msg = messages[msgIdx];
+    // NEVER deduplicate user messages — they contain unique prompts
+    if (msg.info.role === "user") continue;
     for (const part of msg.parts) {
       if (part.type === "text" && part.text && part.text.length > 20) {
         const hash = simpleHash(part.text);
@@ -122,11 +126,23 @@ export function compactMessageHistory(messages: MessageItem[], sessionID?: strin
   const sessionId = extractSessionId(messages);
 
   // Step 1: Drop old messages on compact_now or trigger-only (keep only last KEEP_RECENT)
+  // BUT never drop user messages — they contain task prompts/instructions
   let removed = 0;
   if ((signal?.advice === "compact_now" || triggered) && messages.length > KEEP_RECENT) {
-    removed = messages.length - KEEP_RECENT;
-    // Mutate array in-place: remove oldest messages
-    messages.splice(0, removed);
+    const toRemove = messages.length - KEEP_RECENT;
+    // Remove oldest non-user messages first
+    let removedCount = 0;
+    let idx = 0;
+    while (removedCount < toRemove && idx < messages.length) {
+      if (messages[idx].info.role !== "user") {
+        messages.splice(idx, 1);
+        removedCount++;
+        // Don't increment idx — splice shifts elements
+      } else {
+        idx++;
+      }
+    }
+    removed = removedCount;
   }
 
   // Step 2: Truncate long tool outputs

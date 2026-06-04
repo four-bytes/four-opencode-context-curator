@@ -142,7 +142,7 @@ describe("Compaction Integration", () => {
     const messages = [
       { info: { role: "user" }, parts: [{ type: "text", text: "hello" }] },
       { info: { role: "assistant" }, parts: [{ type: "text", text: "hi there" }] },
-      { info: { role: "user" }, parts: [{ type: "text", text: Array(80).fill("log").join("\n") }] },
+      { info: { role: "assistant" }, parts: [{ type: "text", text: Array(80).fill("log").join("\n") }] },
     ];
 
     const result = compactMessageHistory(messages, "test");
