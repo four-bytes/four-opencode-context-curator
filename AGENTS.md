@@ -21,3 +21,4 @@ Pointer auf zentrale Standards: `~/.personal-config/ai-shared/AGENTS.md` und Met
   - `message.part.updated`: wird intern in `packages/opencode/src/acp/event.ts:76` verarbeitet, aber nicht an Plugin-event-Hook weitergereicht
   - `/compact` ACP-Command: `packages/opencode/src/acp/service.ts:556` — detectSlashCommand (Zeile 818) parsed `/compact` aus User-Prompt, dann `session.summarize()` → native opencode-Compaction
   - `client._session.client`: interner Client-Zugriffspfad für SDK-Session-Zugriff (z.B. `client._session.client.session.summarize()`)
+  - **compaction-Agent (intern):** `packages/opencode/src/agent/prompt/compaction.txt` — Prompt des internen compaction-System-Agenten (9 Zeilen). Geladen in `packages/opencode/src/agent/agent.ts:12`, genutzt in `packages/opencode/src/session/compaction.ts:384` via `agents.get("compaction")`. Wird von `session.summarize()` verwendet.

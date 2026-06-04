@@ -18,6 +18,12 @@
 - `"event"` aus `package.json` `hooks` — Phantom-Hook (#102)
 - `createCompactionSignalHook`-Tests auf `parseCompactionSignal` + `setLastSignal` migriert (#102)
 
+## [0.6.1] - 2026-06-05
+
+### Fixed
+- Remove dead imports `isInCompactionCooldown`, `decrementCompactionCooldown` aus `four-opencode-context-curator.ts`
+- Remove dead code `createCompactionSignalHook`, `CompactionSignalCallback`, `TextPartPayload`, `PartUpdatedEvent` aus `signal-parser.ts`
+
 ## [Unreleased]
 ## [0.4.0] - 2026-06-04
 

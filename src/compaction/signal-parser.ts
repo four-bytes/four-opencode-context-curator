@@ -1,5 +1,3 @@
-import { setLastSignal } from "./state.js";
-
 export interface CompactionSignal {
   advice: "no_compact" | "compact_soon" | "compact_now";
   reason: string;
@@ -27,58 +25,6 @@ export function parseCompactionSignal(text: string): CompactionSignal | null {
     : [];
 
   return { advice, reason, safeToCompact };
-}
-
-export type CompactionSignalCallback = (signal: CompactionSignal, sessionID: string) => void;
-
-/**
- * Loose structural type matching the EventMessagePartUpdated shape
- * from @opencode-ai/sdk (transitive dep, not directly importable).
- */
-interface TextPartPayload {
-  id: string;
-  sessionID: string;
-  messageID: string;
-  type: "text";
-  text: string;
-  [key: string]: unknown;
-}
-
-interface PartUpdatedEvent {
-  type: "message.part.updated";
-  properties: {
-    sessionID: string;
-    part: TextPartPayload;
-    time: number;
-  };
-}
-
-export function createCompactionSignalHook(onSignal?: CompactionSignalCallback) {
-  return async (input: { event: { type: string; properties: Record<string, unknown> } }): Promise<void> => {
-    try {
-      const ev = input.event;
-      if (ev.type !== "message.part.updated") return;
-
-      const props = ev.properties as PartUpdatedEvent["properties"];
-      const part = props.part;
-      if (!part || part.type !== "text") return;
-
-      const text = part.text;
-      if (!text) return;
-
-      const signal = parseCompactionSignal(text);
-      if (!signal) return;
-
-      const sid = props.sessionID || "";
-      setLastSignal(sid, signal);
-
-      if (onSignal) {
-        onSignal(signal, sid);
-      }
-    } catch {
-      // Silent — never throw from hook
-    }
-  };
 }
 
 /** Strip compaction_advice block from text (for testing). */

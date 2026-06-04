@@ -3,7 +3,7 @@ import { applyPruning } from "../src/compaction/pruning-engine.js";
 import { setLastSignal, clearSignal, getCompactionState } from "../src/compaction/state.js";
 import { writeDiaryEntry } from "../src/compaction/diary.js";
 import { compactMessageHistory } from "../src/compaction/message-compactor.js";
-import { createCompactionSignalHook, type CompactionSignal } from "../src/compaction/signal-parser.js";
+import { parseCompactionSignal, type CompactionSignal } from "../src/compaction/signal-parser.js";
 import { existsSync, readFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -91,40 +91,17 @@ describe("Compaction Integration", () => {
     expect(stats.duplicatesRemoved).toBeGreaterThanOrEqual(0);
   });
 
-  it("event hook sets signal and triggers diary via pruning pipeline", async () => {
-    // Simulate the full flow: event hook → setLastSignal → pruning → diary
-    const text = [
-      "Some code output here...",
-      "",
-      "compaction_advice: compact_now",
-      "reason: integration test complete, logs accumulated",
-      "safe_to_compact: integration_test, test_logs",
-      "",
-    ].join("\n");
+  it("parseCompactionSignal → setLastSignal → pruning → diary", () => {
+    // Simulate the full flow: parse signal → setLastSignal → pruning → diary
+    const text = "Some code output here...\n\ncompaction_advice: compact_now\nreason: integration test complete, logs accumulated\nsafe_to_compact: integration_test, test_logs\n";
 
-    const hook = createCompactionSignalHook();
-    await hook({
-      event: {
-        type: "message.part.updated",
-        properties: {
-          sessionID: "session-integration",
-          part: {
-            id: "part-integration",
-            sessionID: "session-integration",
-            messageID: "msg-integration",
-            type: "text",
-            text,
-          },
-          time: Date.now(),
-        },
-      },
-    });
+    const signal = parseCompactionSignal(text);
+    expect(signal).not.toBeNull();
+    expect(signal!.advice).toBe("compact_now");
+    expect(signal!.reason).toBe("integration test complete, logs accumulated");
+    expect(signal!.safeToCompact).toEqual(["integration_test", "test_logs"]);
 
-    const state = getCompactionState("session-integration");
-    expect(state.lastSignal).not.toBeNull();
-    expect(state.lastSignal!.advice).toBe("compact_now");
-    expect(state.lastSignal!.reason).toBe("integration test complete, logs accumulated");
-    expect(state.lastSignal!.safeToCompact).toEqual(["integration_test", "test_logs"]);
+    setLastSignal("session-integration", signal!);
 
     // Now simulate pruning + diary write (existing pipeline)
     const input = [
