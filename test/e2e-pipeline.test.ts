@@ -39,6 +39,7 @@ describe("E2E Harness Smoke Test", () => {
     delete process.env.CC_DEBUG;
     delete process.env.GH_ISSUE;
     delete process.env.OPENDOC_TASK;
+    delete process.env.OPENDOC_SESSION_ID;
     removeSession("e2e");
   });
   it("plugin loads and returns all 3 hooks", () => {
@@ -82,8 +83,9 @@ describe("E2E Harness Smoke Test", () => {
     expect(output.messages[1].parts[0].text).not.toContain("compaction_advice");
     expect(mockSummarize).toHaveBeenCalledTimes(1);
     const callArg = mockSummarize.mock.calls[0][0];
-    expect(callArg.path.id).toBe("e2e");
-    expect(callArg.query.directory).toBeDefined();
+    const expectedSessionID = process.env.OPENDOC_SESSION_ID ?? "unknown";
+    expect(callArg.sessionID).toBe(expectedSessionID);
+    expect(callArg.directory).toBeDefined();
   });
 
   it("injects placeholder when assistant message is only a compaction signal", async () => {

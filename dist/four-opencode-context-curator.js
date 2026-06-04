@@ -382,21 +382,20 @@ function setLastTokenEstimate(sessionID, n) {
 function isCompacting(sessionID = "default") {
   return getSessionState(sessionID).compactingActive;
 }
-var triggerCooldowns = new Map;
-function canTriggerCompaction(sessionID, cooldownMs = 30000) {
-  const now = Date.now();
-  const lastTriggered = triggerCooldowns.get(sessionID) ?? 0;
-  if (now - lastTriggered < cooldownMs)
-    return false;
-  triggerCooldowns.set(sessionID, now);
-  return true;
-}
 var compactionCooldowns = new Map;
+function decrementCompactionCooldown(sessionID) {
+  const current = compactionCooldowns.get(sessionID) ?? 0;
+  if (current > 0)
+    compactionCooldowns.set(sessionID, current - 1);
+}
 function isInCompactionCooldown(sessionID) {
   return (compactionCooldowns.get(sessionID) ?? 0) > 0;
 }
 function getCompactionCooldownRemaining(sessionID) {
   return compactionCooldowns.get(sessionID) ?? 0;
+}
+function setCompactionCooldown(sessionID, turns = 3) {
+  compactionCooldowns.set(sessionID, turns);
 }
 
 // src/compaction/signal-injector.ts
@@ -737,6 +736,16 @@ function compactMessageHistory(messages, sessionID) {
       }
     }
     removed = removedCount;
+    if (removedCount > 0) {
+      logDebugEvent("compaction.remove.applied", { removed: removedCount, messagesBefore, sessionId });
+    } else if (toRemove > 0) {
+      logDebugEvent("compaction.remove.stalled", {
+        reason: "all messages are user-role or non-removable",
+        toRemove,
+        messagesBefore,
+        sessionId
+      });
+    }
   }
   const truncations = truncateMessageParts(messages);
   const duplicates = deduplicateMessageParts(messages);
@@ -952,26 +961,49 @@ var FourContextCuratorPlugin = async (ctx) => {
             if (signal) {
               setLastSignal(sessionID, signal);
               logDebugEvent("compaction.signal.parsed", { advice: signal.advice, reason: signal.reason, sessionID });
-              if (signal.advice === "compact_now" && canTriggerCompaction(sessionID)) {
+              const realSessionID = process.env.OPENDOC_SESSION_ID;
+              const inCooldown = getCompactionState(sessionID).compactingActive || getCompactionCooldownRemaining(sessionID) > 0;
+              if (signal.advice === "compact_now" && !inCooldown) {
                 const userModel = getCompactionState(sessionID).lastUserModel;
-                logDebugEvent("compaction.summarize.triggered", { sessionID, providerID: userModel.providerID, modelID: userModel.modelID });
+                logDebugEvent("compaction.summarize.triggered", {
+                  sessionID: realSessionID,
+                  providerID: userModel.providerID,
+                  modelID: userModel.modelID
+                });
                 try {
                   await client.session.summarize({
-                    path: { id: sessionID },
-                    query: { directory: process.cwd() },
-                    ...userModel.providerID && userModel.modelID ? { body: { providerID: userModel.providerID, modelID: userModel.modelID } } : {},
-                    throwOnError: true
+                    sessionID: realSessionID ?? "unknown",
+                    directory: process.cwd(),
+                    providerID: userModel.providerID || undefined,
+                    modelID: userModel.modelID || undefined
+                  }, { throwOnError: true });
+                  setCompactionCooldown(sessionID, 3);
+                  logDebugEvent("compaction.summarize.completed", {
+                    sessionID: realSessionID,
+                    cooldown: 3
                   });
-                  logDebugEvent("compaction.summarize.completed", { sessionID });
                 } catch (err) {
-                  logDebugEvent("compaction.summarize.error", { error: String(err), sessionID });
+                  const msg = `\x1B[31m[four-opencode-context-curator] \u274C compaction request failed (session=${realSessionID}): ${String(err)}\x1B[0m`;
+                  process.stderr.write(msg + `
+`);
+                  logDebugEvent("compaction.summarize.error", {
+                    error: String(err),
+                    sessionID: realSessionID
+                  });
                 }
+              } else if (signal.advice === "compact_now" && inCooldown) {
+                logDebugEvent("compaction.summarize.cooldown_skipped", {
+                  sessionID: realSessionID,
+                  cooldownRemaining: getCompactionCooldownRemaining(sessionID),
+                  compactingActive: getCompactionState(sessionID).compactingActive
+                });
               }
               break;
             }
           }
           break;
         }
+        decrementCompactionCooldown(sessionID);
         compactMessageHistory(output.messages, sessionID);
         let totalTokens = 0;
         for (const m of output.messages) {

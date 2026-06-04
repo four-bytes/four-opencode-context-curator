@@ -49,7 +49,6 @@ export function getSessionIDs(): string[] {
 
 export function removeSession(sessionID: string): void {
   sessionStates.delete(sessionID);
-  triggerCooldowns.delete(sessionID);
   compactionCooldowns.delete(sessionID);
 }
 
@@ -123,16 +122,6 @@ export function isCompacting(sessionID: string = "default"): boolean {
   return getSessionState(sessionID).compactingActive;
 }
 
-const triggerCooldowns = new Map<string, number>();
-
-export function canTriggerCompaction(sessionID: string, cooldownMs: number = 30000): boolean {
-  const now = Date.now();
-  const lastTriggered = triggerCooldowns.get(sessionID) ?? 0;
-  if (now - lastTriggered < cooldownMs) return false;
-  triggerCooldowns.set(sessionID, now);
-  return true;
-}
-
 const compactionCooldowns = new Map<string, number>();
 
 
@@ -147,4 +136,8 @@ export function isInCompactionCooldown(sessionID: string): boolean {
 
 export function getCompactionCooldownRemaining(sessionID: string): number {
   return compactionCooldowns.get(sessionID) ?? 0;
+}
+
+export function setCompactionCooldown(sessionID: string, turns: number = 3): void {
+  compactionCooldowns.set(sessionID, turns);
 }

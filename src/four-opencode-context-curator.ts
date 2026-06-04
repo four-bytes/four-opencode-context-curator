@@ -9,7 +9,7 @@ import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
 import { parseCompactionSignal, stripCompactionSignal } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
-import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, setLastTokenEstimate, getLastTokenEstimate, canTriggerCompaction } from "./compaction/state.js";
+import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, setLastTokenEstimate, getLastTokenEstimate, getCompactionCooldownRemaining, setCompactionCooldown, decrementCompactionCooldown } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
 import { estimateMessageTokens } from "./compaction/tokens.js";
 import { logDebugEvent } from "./debug-logger.js";
@@ -175,29 +175,55 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
               logDebugEvent("compaction.signal.parsed", { advice: signal.advice, reason: signal.reason, sessionID });
 
               // Trigger native session compaction on compact_now — same as /compact slash command.
-              // Guard: 30s cooldown prevents double-trigger during nested compaction flows.
-              if (signal.advice === "compact_now" && canTriggerCompaction(sessionID)) {
+              // Guard: 3-turns cooldown prevents double-trigger during nested compaction flows.
+              const realSessionID = process.env.OPENDOC_SESSION_ID;
+              const inCooldown = (getCompactionState(sessionID).compactingActive) ||
+                ((getCompactionCooldownRemaining(sessionID) > 0));
+              if (signal.advice === "compact_now" && !inCooldown) {
                 const userModel = getCompactionState(sessionID).lastUserModel;
-                logDebugEvent("compaction.summarize.triggered", { sessionID, providerID: userModel.providerID, modelID: userModel.modelID });
+                logDebugEvent("compaction.summarize.triggered", {
+                  sessionID: realSessionID,
+                  providerID: userModel.providerID,
+                  modelID: userModel.modelID,
+                });
                 try {
-                  await (client.session.summarize as (opts: Record<string, unknown>) => Promise<unknown>)({
-                    path: { id: sessionID },
-                    query: { directory: process.cwd() },
-                    ...(userModel.providerID && userModel.modelID
-                      ? { body: { providerID: userModel.providerID, modelID: userModel.modelID } }
-                      : {}),
-                    throwOnError: true,
+                  await (client.session.summarize as any)(
+                    {
+                      sessionID: realSessionID ?? "unknown",
+                      directory: process.cwd(),
+                      providerID: userModel.providerID || undefined,
+                      modelID: userModel.modelID || undefined,
+                    },
+                    { throwOnError: true },
+                  );
+                  setCompactionCooldown(sessionID, 3);
+                  logDebugEvent("compaction.summarize.completed", {
+                    sessionID: realSessionID,
+                    cooldown: 3,
                   });
-                  logDebugEvent("compaction.summarize.completed", { sessionID });
                 } catch (err) {
-                  logDebugEvent("compaction.summarize.error", { error: String(err), sessionID });
+                  const msg = `\x1b[31m[four-opencode-context-curator] ❌ compaction request failed (session=${realSessionID}): ${String(err)}\x1b[0m`;
+                  process.stderr.write(msg + "\n");
+                  logDebugEvent("compaction.summarize.error", {
+                    error: String(err),
+                    sessionID: realSessionID,
+                  });
                 }
+              } else if (signal.advice === "compact_now" && inCooldown) {
+                logDebugEvent("compaction.summarize.cooldown_skipped", {
+                  sessionID: realSessionID,
+                  cooldownRemaining: getCompactionCooldownRemaining(sessionID),
+                  compactingActive: getCompactionState(sessionID).compactingActive,
+                });
               }
               break;
             }
           }
           break; // Only process the most recent assistant message
         }
+
+        // Decrement turns-based compaction cooldown each messages.transform
+        decrementCompactionCooldown(sessionID);
 
         compactMessageHistory(
           output.messages as Array<{
