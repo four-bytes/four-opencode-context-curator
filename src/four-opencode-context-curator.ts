@@ -103,6 +103,8 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         output.prompt = lines.join("\n");
       } catch {
         // Non-blocking
+      } finally {
+        try { clearSignal(sessionID); } catch {}
       }
     },
     "experimental.chat.messages.transform": async (_input, output) => {
