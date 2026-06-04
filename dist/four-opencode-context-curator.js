@@ -324,8 +324,8 @@ class IssueSliceLayer {
 
 // src/compaction/state.ts
 var sessionStates = new Map;
-function getSessionState(sessionID2 = "default") {
-  let s = sessionStates.get(sessionID2);
+function getSessionState(sessionID = "default") {
+  let s = sessionStates.get(sessionID);
   if (!s) {
     s = {
       lastSignal: null,
@@ -336,59 +336,59 @@ function getSessionState(sessionID2 = "default") {
       lastUserModel: { providerID: undefined, modelID: undefined },
       lastTokenEstimate: 0
     };
-    sessionStates.set(sessionID2, s);
+    sessionStates.set(sessionID, s);
   }
   return s;
 }
-function getCompactionState(sessionID2 = "default") {
-  return getSessionState(sessionID2);
+function getCompactionState(sessionID = "default") {
+  return getSessionState(sessionID);
 }
-function setLastSignal(sessionID2, signal) {
-  getSessionState(sessionID2).lastSignal = signal;
+function setLastSignal(sessionID, signal) {
+  getSessionState(sessionID).lastSignal = signal;
 }
-function clearSignal(sessionID2 = "default") {
-  const s = getSessionState(sessionID2);
+function clearSignal(sessionID = "default") {
+  const s = getSessionState(sessionID);
   s.lastSignal = null;
   s.appliedForPruning.clear();
   s.appliedForMessages.clear();
 }
-function markAppliedPruning(sessionID2, block) {
-  getSessionState(sessionID2).appliedForPruning.add(block);
+function markAppliedPruning(sessionID, block) {
+  getSessionState(sessionID).appliedForPruning.add(block);
 }
-function wasAppliedPruning(sessionID2, block) {
-  return getSessionState(sessionID2).appliedForPruning.has(block);
+function wasAppliedPruning(sessionID, block) {
+  return getSessionState(sessionID).appliedForPruning.has(block);
 }
-function markAppliedMessages(sessionID2, block) {
-  getSessionState(sessionID2).appliedForMessages.add(block);
+function markAppliedMessages(sessionID, block) {
+  getSessionState(sessionID).appliedForMessages.add(block);
 }
-function wasAppliedMessages(sessionID2, block) {
-  return getSessionState(sessionID2).appliedForMessages.has(block);
+function wasAppliedMessages(sessionID, block) {
+  return getSessionState(sessionID).appliedForMessages.has(block);
 }
-function clearTransformState(sessionID2 = "default") {
-  const s = getSessionState(sessionID2);
+function clearTransformState(sessionID = "default") {
+  const s = getSessionState(sessionID);
   s.appliedForPruning.clear();
   s.appliedForMessages.clear();
 }
-function addEvent(sessionID2, event) {
-  getSessionState(sessionID2).history.push(event);
+function addEvent(sessionID, event) {
+  getSessionState(sessionID).history.push(event);
 }
-function setLastUserModel(sessionID2, providerID, modelID) {
-  getSessionState(sessionID2).lastUserModel = { providerID, modelID };
+function setLastUserModel(sessionID, providerID, modelID) {
+  getSessionState(sessionID).lastUserModel = { providerID, modelID };
 }
-function setLastTokenEstimate(sessionID2, n) {
-  getSessionState(sessionID2).lastTokenEstimate = n;
+function setLastTokenEstimate(sessionID, n) {
+  getSessionState(sessionID).lastTokenEstimate = n;
 }
 var triggerCooldowns = new Map;
 var compactionCooldowns = new Map;
-function isInCompactionCooldown(sessionID2) {
-  return (compactionCooldowns.get(sessionID2) ?? 0) > 0;
+function isInCompactionCooldown(sessionID) {
+  return (compactionCooldowns.get(sessionID) ?? 0) > 0;
 }
-function getCompactionCooldownRemaining(sessionID2) {
-  return compactionCooldowns.get(sessionID2) ?? 0;
+function getCompactionCooldownRemaining(sessionID) {
+  return compactionCooldowns.get(sessionID) ?? 0;
 }
 
 // src/compaction/signal-injector.ts
-function createCompactionInstruction(sessionID2 = "default") {
+function createCompactionInstruction(sessionID = "default") {
   const base = `\u2500\u2500 COMPACTION SIGNAL \u2500\u2500
 
 After completing a major work phase (issue done, research block finished, debug session closed), evaluate whether the session context would benefit from compaction. Output EXACTLY ONE of these signals at the end of your response:
@@ -409,10 +409,10 @@ RULES:
 - no_compact: during active debugging, open investigations, or when critical state is fragile
 - NEVER signal compact_now during an open debug session
 - safe_to_compact: list only completed/stale blocks (e.g. "issue_5_research, tool_logs_turn_10-20")`;
-  if (isInCompactionCooldown(sessionID2)) {
+  if (isInCompactionCooldown(sessionID)) {
     return base + `
 
-COMPACTION-COOLDOWN ACTIVE (${getCompactionCooldownRemaining(sessionID2)} turns remaining): A compaction was just triggered. Output \`no_compact\` unless a substantial NEW work block completed in this turn.`;
+COMPACTION-COOLDOWN ACTIVE (${getCompactionCooldownRemaining(sessionID)} turns remaining): A compaction was just triggered. Output \`no_compact\` unless a substantial NEW work block completed in this turn.`;
   }
   return base;
 }
@@ -520,8 +520,8 @@ function condenseIssueSlice(content, safeToCompact) {
 }
 function applyPruning(layerContents, config = {}) {
   const cfg = { ...DEFAULT_CONFIG, ...config };
-  const sessionID2 = cfg.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default";
-  const state = getCompactionState(sessionID2);
+  const sessionID = cfg.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default";
+  const state = getCompactionState(sessionID);
   const signal = state.lastSignal;
   const stats = {
     originalLines: layerContents.reduce((sum, c) => sum + c.split(`
@@ -538,7 +538,7 @@ function applyPruning(layerContents, config = {}) {
     }
   }
   if (signal) {
-    const newBlocks = signal.safeToCompact.filter((b) => !wasAppliedPruning(sessionID2, b));
+    const newBlocks = signal.safeToCompact.filter((b) => !wasAppliedPruning(sessionID, b));
     if (newBlocks.length === 0 && !triggered) {
       stats.prunedLines = stats.originalLines;
       return { contents: layerContents, stats };
@@ -558,10 +558,10 @@ function applyPruning(layerContents, config = {}) {
 `).length, 0);
   if (signal) {
     for (const block of safeToCompact) {
-      markAppliedPruning(sessionID2, block);
+      markAppliedPruning(sessionID, block);
     }
   }
-  addEvent(sessionID2, {
+  addEvent(sessionID, {
     ts: Date.now(),
     advice: signal?.advice ?? "triggered",
     reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
@@ -685,8 +685,8 @@ function extractSessionId(messages) {
   }
   return process.env.OPENDOC_SESSION_ID || process.env.SESSION_ID || "unknown";
 }
-function compactMessageHistory(messages, sessionID2) {
-  const sid = sessionID2 ?? process.env.OPENDOC_SESSION_ID ?? "default";
+function compactMessageHistory(messages, sessionID) {
+  const sid = sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default";
   const state = getCompactionState(sid);
   const signal = state.lastSignal;
   const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
@@ -823,12 +823,12 @@ var FourContextCuratorPlugin = async (ctx) => {
   const client = ctx.client;
   return {
     "experimental.chat.system.transform": async (_input, output) => {
-      const sessionID2 = _input?.sessionID ?? "default";
+      const sessionID = _input?.sessionID ?? "default";
       const layerContents = await runLayerPipeline(hookCtx);
       logDebugEvent("compaction.system.transform", { layerCount: layerContents.length });
       if (layerContents.length > 0) {
         const sanitized = layerContents.map(sanitizeLayerContent);
-        const pruned = applyPruning(sanitized, { sessionID: sessionID2 });
+        const pruned = applyPruning(sanitized, { sessionID });
         const prefix = [
           "\u2500\u2500 CONTEXT CURATOR (Layered Cacheable Prefixes) \u2500\u2500",
           ...pruned.contents
@@ -837,12 +837,12 @@ var FourContextCuratorPlugin = async (ctx) => {
 `);
         output.system.push(prefix);
       }
-      output.system.push(createCompactionInstruction(sessionID2));
+      output.system.push(createCompactionInstruction(sessionID));
     },
     "experimental.session.compacting": async (input, output) => {
+      const sessionID = input?.sessionID ?? "default";
       try {
-        const sessionID2 = input?.sessionID ?? "default";
-        const state = getCompactionState(sessionID2);
+        const state = getCompactionState(sessionID);
         const signal = state.lastSignal;
         const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
         process.env.CC_COMPACTION_TRIGGER = "true";
@@ -882,7 +882,7 @@ var FourContextCuratorPlugin = async (ctx) => {
     },
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
-        const sessionID2 = _input?.sessionID ?? "default";
+        const sessionID = _input?.sessionID ?? "default";
         logDebugEvent("compaction.messages.transform", { messageCount: output.messages.length });
         let lastUserMsg;
         for (let i = output.messages.length - 1;i >= 0; i--) {
@@ -912,7 +912,7 @@ var FourContextCuratorPlugin = async (ctx) => {
               path = "info.model";
             }
             if (path) {
-              setLastUserModel(sessionID2, providerID, modelID);
+              setLastUserModel(sessionID, providerID, modelID);
               logDebugEvent("compaction.user_model.updated", { providerID, modelID, path });
             } else {
               logDebugEvent("compaction.user_model.shape_unknown", { keys: Object.keys(info) });
@@ -931,18 +931,18 @@ var FourContextCuratorPlugin = async (ctx) => {
               continue;
             const signal = parseCompactionSignal(part.text);
             if (signal) {
-              setLastSignal(sessionID2, signal);
-              logDebugEvent("compaction.signal.parsed", { advice: signal.advice, reason: signal.reason, sessionID: sessionID2 });
+              setLastSignal(sessionID, signal);
+              logDebugEvent("compaction.signal.parsed", { advice: signal.advice, reason: signal.reason, sessionID });
               if (signal.advice === "compact_now") {
-                const userModel = getCompactionState(sessionID2).lastUserModel;
+                const userModel = getCompactionState(sessionID).lastUserModel;
                 client.session.summarize({
-                  sessionID: sessionID2,
+                  sessionID,
                   directory: process.cwd(),
                   ...userModel.providerID && userModel.modelID ? { providerID: userModel.providerID, modelID: userModel.modelID } : {}
                 }).then(() => {
-                  logDebugEvent("compaction.summarize.completed", { sessionID: sessionID2 });
+                  logDebugEvent("compaction.summarize.completed", { sessionID });
                 }).catch((err) => {
-                  logDebugEvent("compaction.summarize.error", { error: String(err), sessionID: sessionID2 });
+                  logDebugEvent("compaction.summarize.error", { error: String(err), sessionID });
                 });
               }
               break;
@@ -950,12 +950,12 @@ var FourContextCuratorPlugin = async (ctx) => {
           }
           break;
         }
-        compactMessageHistory(output.messages, sessionID2);
+        compactMessageHistory(output.messages, sessionID);
         let totalTokens = 0;
         for (const m of output.messages) {
           totalTokens += estimateMessageTokens(m);
         }
-        setLastTokenEstimate(sessionID2, totalTokens);
+        setLastTokenEstimate(sessionID, totalTokens);
         logDebugEvent("compaction.tokens.estimated", { totalTokens, messageCount: output.messages.length });
         for (const msg of output.messages) {
           const m = msg;
@@ -974,7 +974,7 @@ var FourContextCuratorPlugin = async (ctx) => {
             logDebugEvent("compaction.guard.placeholder_injected", { partCount: m.parts.length });
           }
         }
-        clearTransformState(sessionID2);
+        clearTransformState(sessionID);
       } catch {} finally {
         delete process.env.CC_COMPACTION_TRIGGER;
       }

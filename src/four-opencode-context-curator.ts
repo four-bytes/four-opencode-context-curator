@@ -66,8 +66,8 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       output.system.push(createCompactionInstruction(sessionID));
     },
     "experimental.session.compacting": async (input, output) => {
+      const sessionID = (input as any)?.sessionID ?? "default";
       try {
-        const sessionID = (input as any)?.sessionID ?? "default";
         const state = getCompactionState(sessionID);
         const signal = state.lastSignal;
         const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
@@ -188,7 +188,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
               // Trigger native session compaction on compact_now
               if (signal.advice === "compact_now") {
                 const userModel = getCompactionState(sessionID).lastUserModel;
-                client.session.summarize({
+                (client.session.summarize as (opts: Record<string, unknown>) => Promise<unknown>)({
                   sessionID,
                   directory: process.cwd(),
                   ...(userModel.providerID && userModel.modelID
