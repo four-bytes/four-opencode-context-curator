@@ -9,7 +9,7 @@ import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
 import { parseCompactionSignal, stripCompactionSignal } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
-import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, setLastTokenEstimate, getLastTokenEstimate } from "./compaction/state.js";
+import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, setLastTokenEstimate, getLastTokenEstimate, setCompacting } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
 import { estimateMessageTokens } from "./compaction/tokens.js";
 import { logDebugEvent } from "./debug-logger.js";
@@ -70,9 +70,9 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       try {
         const state = getCompactionState(sessionID);
         const signal = state.lastSignal;
-        const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
+        const triggered = false;
 
-        process.env.CC_COMPACTION_TRIGGER = "true";
+        setCompacting(sessionID, true);
 
         logDebugEvent("compaction.compacting", {
           triggered: true,
@@ -114,11 +114,12 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       } finally {
         // Clear signal after compaction has been processed
         clearSignal(sessionID);
+        setCompacting(sessionID, false);
       }
     },
     "experimental.chat.messages.transform": async (_input, output) => {
+      const sessionID = (_input as any)?.sessionID ?? "default";
       try {
-        const sessionID = (_input as any)?.sessionID ?? "default";
         logDebugEvent("compaction.messages.transform", { messageCount: output.messages.length });
 
         // Derive provider/model from last user message for summarize candidate
@@ -253,8 +254,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       } catch {
         // Non-blocking
       } finally {
-        // Clean up trigger flag after both transforms have run
-        delete process.env.CC_COMPACTION_TRIGGER;
+        setCompacting(sessionID, false);
       }
     },
   };

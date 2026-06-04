@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "bun:test";
 import { applyPruning } from "../src/compaction/pruning-engine.js";
-import { setLastSignal, clearSignal, getCompactionState } from "../src/compaction/state.js";
+import { setLastSignal, clearSignal, getCompactionState, setCompacting } from "../src/compaction/state.js";
 import { writeDiaryEntry } from "../src/compaction/diary.js";
 import { compactMessageHistory } from "../src/compaction/message-compactor.js";
 import { parseCompactionSignal, type CompactionSignal } from "../src/compaction/signal-parser.js";
@@ -27,6 +27,7 @@ describe("Compaction Integration", () => {
   afterEach(() => {
     clearSignal("test");
     getCompactionState("test").appliedFor.clear();
+    setCompacting("test", false);
   });
 
   afterAll(() => {
@@ -135,7 +136,7 @@ describe("Compaction Integration", () => {
   });
 
   it("trigger-only compactMessageHistory applies generic heuristics", async () => {
-    process.env.CC_COMPACTION_TRIGGER = "true";
+    setCompacting("test", true);
     clearSignal("test");
 
     const messages = [
@@ -151,7 +152,7 @@ describe("Compaction Integration", () => {
     // Should have reduced chars (long message truncated)
     expect(result.charsAfter).toBeLessThan(result.charsBefore);
 
-    delete process.env.CC_COMPACTION_TRIGGER;
+    setCompacting("test", false);
     clearSignal("test");
   });
 });
