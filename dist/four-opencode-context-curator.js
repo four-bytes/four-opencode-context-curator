@@ -957,8 +957,8 @@ var FourContextCuratorPlugin = async (ctx) => {
         }
         setLastTokenEstimate(sessionID, totalTokens);
         logDebugEvent("compaction.tokens.estimated", { totalTokens, messageCount: output.messages.length });
-        for (const msg of output.messages) {
-          const m = msg;
+        for (let msgIdx = 0;msgIdx < output.messages.length; msgIdx++) {
+          const m = output.messages[msgIdx];
           if (!Array.isArray(m.parts))
             continue;
           for (const part of m.parts) {
@@ -970,7 +970,9 @@ var FourContextCuratorPlugin = async (ctx) => {
           const hasNonEmptyText = m.parts.some((p) => p.type === "text" && typeof p.text === "string" && p.text.length > 0);
           const hasToolCall = m.parts.some((p) => p.type === "tool-call" || p.type === "tool_call");
           if (role === "assistant" && !hasNonEmptyText && !hasToolCall) {
-            m.parts.push({ type: "text", text: "\u2026" });
+            const state = getCompactionState(sessionID);
+            const reason = state.lastSignal?.reason ?? "";
+            m.parts.push({ type: "text", text: reason ? `\u2026 [compacted: ${reason}]` : "\u2026 [compacted]" });
             logDebugEvent("compaction.guard.placeholder_injected", { partCount: m.parts.length });
           }
         }

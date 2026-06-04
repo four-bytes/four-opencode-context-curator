@@ -223,8 +223,8 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         logDebugEvent("compaction.tokens.estimated", { totalTokens, messageCount: output.messages.length });
 
         // Strip compaction_signal from visible output
-        for (const msg of output.messages) {
-          const m = msg as {
+        for (let msgIdx = 0; msgIdx < output.messages.length; msgIdx++) {
+          const m = output.messages[msgIdx] as {
             info?: { role?: string };
             parts?: Array<{ type: string; text?: string }>;
           };
@@ -241,7 +241,9 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
           );
           const hasToolCall = m.parts.some((p) => p.type === "tool-call" || p.type === "tool_call");
           if (role === "assistant" && !hasNonEmptyText && !hasToolCall) {
-            m.parts.push({ type: "text", text: "\u2026" });
+            const state = getCompactionState(sessionID);
+            const reason = state.lastSignal?.reason ?? "";
+            m.parts.push({ type: "text", text: reason ? `\u2026 [compacted: ${reason}]` : "\u2026 [compacted]" });
             logDebugEvent("compaction.guard.placeholder_injected", { partCount: m.parts.length });
           }
         }
