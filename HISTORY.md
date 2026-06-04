@@ -1,5 +1,23 @@
 # Project Change History
 
+## [0.5.0] - 2026-06-04
+
+### Added
+- File-based Compaction Trigger (`src/compaction/file-trigger.ts`): Liest `~/.cache/opencode/four-opencode-context-curator/force-compact.json` in `messages.transform` und setzt das Compaction-Signal daraus. Ermöglicht manuelles Forcen von Compaction per Datei-Side-Channel — unabhängig vom LLM-generierten `compaction_advice`-Signal.
+- `test/file-trigger.test.ts`: 12 Tests für File-Trigger (valid JSON, empty file, invalid JSON, invalid advice, session override, case insensitivity)
+
+## [0.6.0] - 2026-06-05
+
+### Fixed
+- Compaction-Signal-Flow: Phantom-Event-Hook (#102) entfernt — `event`-Hook existierte nicht im opencode Plugin-System, Signal wurde nie geparst. Signal-Parsing jetzt direkt in `experimental.chat.messages.transform` aus letzter assistant message.
+- Signal-Clearing-Timing: `clearSignal` jetzt in `session.compacting` (nach Nutzung), `messages.transform` nutzt nur `clearTransformState` (appliedFor-Sets zurücksetzen, lastSignal bleibt) (#102)
+- summarize-Model: Extraktion aus letzter user message (providerID/modelID) läuft jetzt VOR summarize-Aufruf statt danach (#102)
+
+### Removed
+- `src/compaction/file-trigger.ts` + `test/file-trigger.test.ts` — ungenutzter File-Trigger (#102)
+- `"event"` aus `package.json` `hooks` — Phantom-Hook (#102)
+- `createCompactionSignalHook`-Tests auf `parseCompactionSignal` + `setLastSignal` migriert (#102)
+
 ## [Unreleased]
 ## [0.4.0] - 2026-06-04
 
