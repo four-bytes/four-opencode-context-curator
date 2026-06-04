@@ -7,9 +7,9 @@ import { RepoProfileLayer } from "./layers/repo-profile.js";
 import { TaskSliceLayer } from "./layers/task-slice.js";
 import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
-import { createCompactionSignalHook, stripCompactionSignal } from "./compaction/signal-parser.js";
+import { parseCompactionSignal, stripCompactionSignal } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
-import { getCompactionState, clearSignal, setLastSignal, setLastUserModel, setLastTokenEstimate, getLastTokenEstimate, isInCompactionCooldown, decrementCompactionCooldown } from "./compaction/state.js";
+import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, setLastTokenEstimate, getLastTokenEstimate, isInCompactionCooldown, decrementCompactionCooldown } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
 import { estimateMessageTokens } from "./compaction/tokens.js";
 import { logDebugEvent } from "./debug-logger.js";
@@ -45,6 +45,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
   ];
 
   const hookCtx = createHookContext(DEFAULT_LAYERS, layers);
+  const client = ctx.client; // Capture client for summarize() call
 
   return {
     "experimental.chat.system.transform": async (_input, output) => {
@@ -64,53 +65,6 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
 
       output.system.push(createCompactionInstruction(sessionID));
     },
-    event: createCompactionSignalHook((signal, sessionID) => {
-      // Decrement compaction cooldown once per assistant message turn
-      decrementCompactionCooldown(sessionID);
-      setLastSignal("default", signal);
-
-      // If cooldown active, downgrade compact_now to no_compact (prevent double-trigger)
-      if (isInCompactionCooldown(sessionID)) {
-        try {
-          (async () => {
-            const { writeDiaryEntry } = await import("./compaction/diary.js");
-            writeDiaryEntry({
-              ts: Date.now(),
-              advice: "no_compact",
-              reason: signal.reason,
-              blocksCondensed: signal.safeToCompact.length,
-              duplicatesRemoved: 0,
-              linesBefore: 0,
-              linesAfter: 0,
-              reductionPct: 0,
-              sessionId: sessionID ?? "",
-              triggered: false,
-              downgraded: true,
-            });
-          })().catch(() => {});
-        } catch {}
-        return;
-      }
-
-      // Write diary entry for EVERY signal (fire-and-forget)
-      try {
-        (async () => {
-          const { writeDiaryEntry } = await import("./compaction/diary.js");
-          writeDiaryEntry({
-            ts: Date.now(),
-            advice: signal.advice,
-            reason: signal.reason,
-            blocksCondensed: signal.safeToCompact.length,
-            duplicatesRemoved: 0,
-            linesBefore: 0,
-            linesAfter: 0,
-            reductionPct: 0,
-            sessionId: sessionID ?? "",
-            triggered: signal.advice === "compact_now",
-          });
-        })().catch(() => {});
-      } catch {}
-    }),
     "experimental.session.compacting": async (input, output) => {
       try {
         const sessionID = (input as any)?.sessionID ?? "default";
@@ -118,8 +72,6 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         const signal = state.lastSignal;
         const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
 
-        // Set trigger flag so subsequent transforms (system.transform, messages.transform)
-        // will apply pruning. Don't clear here — transforms handle cleanup.
         process.env.CC_COMPACTION_TRIGGER = "true";
 
         logDebugEvent("compaction.compacting", {
@@ -128,8 +80,6 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         });
 
         if (!triggered && (!signal || signal.advice === "no_compact")) {
-          // Even for no_compact: keep CC_COMPACTION_TRIGGER set for generic pruning
-          // (truncation + dedup) in transforms
           return;
         }
 
@@ -161,27 +111,15 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         }
       } catch {
         // Non-blocking
+      } finally {
+        // Clear signal after compaction has been processed
+        clearSignal(sessionID);
       }
     },
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
         const sessionID = (_input as any)?.sessionID ?? "default";
         logDebugEvent("compaction.messages.transform", { messageCount: output.messages.length });
-        compactMessageHistory(
-          output.messages as Array<{
-            info: { role?: string };
-            parts: Array<{ type: string; text?: string }>;
-          }>,
-          sessionID,
-        );
-
-        // Estimate total tokens after compaction
-        let totalTokens = 0;
-        for (const m of output.messages) {
-          totalTokens += estimateMessageTokens(m);
-        }
-        setLastTokenEstimate(sessionID, totalTokens);
-        logDebugEvent("compaction.tokens.estimated", { totalTokens, messageCount: output.messages.length });
 
         // Derive provider/model from last user message for summarize candidate
         let lastUserMsg: (typeof output.messages)[number] | undefined;
@@ -230,6 +168,60 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
           }
         }
 
+        // Parse compaction signal from LAST assistant message in history
+        // (the LLM's previous response contains compaction_advice at the end)
+        const msgs = output.messages as Array<{
+          info?: { role?: string };
+          parts?: Array<{ type: string; text?: string }>;
+        }>;
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          const m = msgs[i];
+          if (m.info?.role !== "assistant") continue;
+          if (!Array.isArray(m.parts)) continue;
+          for (const part of m.parts) {
+            if (part.type !== "text" || !part.text) continue;
+            const signal = parseCompactionSignal(part.text);
+            if (signal) {
+              setLastSignal(sessionID, signal);
+              logDebugEvent("compaction.signal.parsed", { advice: signal.advice, reason: signal.reason, sessionID });
+
+              // Trigger native session compaction on compact_now
+              if (signal.advice === "compact_now") {
+                const userModel = getCompactionState(sessionID).lastUserModel;
+                client.session.summarize({
+                  sessionID,
+                  directory: process.cwd(),
+                  ...(userModel.providerID && userModel.modelID
+                    ? { providerID: userModel.providerID, modelID: userModel.modelID }
+                    : {}),
+                }).then(() => {
+                  logDebugEvent("compaction.summarize.completed", { sessionID });
+                }).catch((err: unknown) => {
+                  logDebugEvent("compaction.summarize.error", { error: String(err), sessionID });
+                });
+              }
+              break;
+            }
+          }
+          break; // Only process the most recent assistant message
+        }
+
+        compactMessageHistory(
+          output.messages as Array<{
+            info: { role?: string };
+            parts: Array<{ type: string; text?: string }>;
+          }>,
+          sessionID,
+        );
+
+        // Estimate total tokens after compaction
+        let totalTokens = 0;
+        for (const m of output.messages) {
+          totalTokens += estimateMessageTokens(m);
+        }
+        setLastTokenEstimate(sessionID, totalTokens);
+        logDebugEvent("compaction.tokens.estimated", { totalTokens, messageCount: output.messages.length });
+
         // Strip compaction_signal from visible output
         for (const msg of output.messages) {
           const m = msg as {
@@ -255,7 +247,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         }
 
         // Clear signal after both transforms have had their chance
-        clearSignal(sessionID);
+        clearTransformState(sessionID);
       } catch {
         // Non-blocking
       } finally {

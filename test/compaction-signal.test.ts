@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "bun:test";
-import { parseCompactionSignal, createCompactionSignalHook } from "../src/compaction/signal-parser.js";
+import { parseCompactionSignal } from "../src/compaction/signal-parser.js";
 import { createCompactionInstruction } from "../src/compaction/signal-injector.js";
-import { clearSignal, getCompactionState } from "../src/compaction/state.js";
+import { clearSignal, getCompactionState, setLastSignal } from "../src/compaction/state.js";
 
 describe("createCompactionInstruction", () => {
   it("returns a non-empty string", () => {
@@ -84,129 +84,63 @@ safe_to_compact: issue_5_research, tool_logs_turn_10-20
   });
 });
 
-describe("createCompactionSignalHook (event-based)", () => {
+describe("parseCompactionSignal → setLastSignal (direct flow, no event hook)", () => {
   afterEach(() => {
-    clearSignal("session-abc");
+    clearSignal("test-session");
   });
 
-  it("parses compact_now from message.part.updated event and calls onSignal", async () => {
-    const signals: Array<{ signal: unknown; sessionID: string }> = [];
-    const hook = createCompactionSignalHook((signal, sessionID) => {
-      signals.push({ signal, sessionID });
-    });
+  it("parses compact_now + setLastSignal", () => {
+    const text = "Answer.\n\ncompaction_advice: compact_now\nreason: test\nsafe_to_compact: a, b";
+    const result = parseCompactionSignal(text);
+    expect(result).not.toBeNull();
+    expect(result!.advice).toBe("compact_now");
+    expect(result!.reason).toBe("test");
+    expect(result!.safeToCompact).toEqual(["a", "b"]);
 
-    const text = [
-      "Here is the answer.",
-      "",
-      "compaction_advice: compact_now",
-      "reason: Issue #5 research complete",
-      "safe_to_compact: issue_5_research, tool_logs",
-      "",
-    ].join("\n");
-
-    await hook({
-      event: {
-        type: "message.part.updated",
-        properties: {
-          sessionID: "session-abc",
-          part: {
-            id: "part-1",
-            sessionID: "session-abc",
-            messageID: "msg-1",
-            type: "text",
-            text,
-          },
-          time: Date.now(),
-        },
-      },
-    });
-
-    const state = getCompactionState("session-abc");
-    expect(state.lastSignal).not.toBeNull();
-    expect(state.lastSignal!.advice).toBe("compact_now");
-    expect(state.lastSignal!.reason).toBe("Issue #5 research complete");
-    expect(state.lastSignal!.safeToCompact).toEqual(["issue_5_research", "tool_logs"]);
-    expect(signals.length).toBe(1);
-    expect(signals[0].sessionID).toBe("session-abc");
+    setLastSignal("test-session", result!);
+    const state = getCompactionState("test-session");
+    expect(state?.lastSignal?.advice).toBe("compact_now");
+    expect(state?.lastSignal?.reason).toBe("test");
   });
 
-  it("ignores non-message.part.updated events", async () => {
-    let fired = false;
-    const hook = createCompactionSignalHook(() => { fired = true; });
+  it("parses compact_soon + setLastSignal", () => {
+    const text = "compaction_advice: compact_soon\nreason: growing\nsafe_to_compact: x";
+    const result = parseCompactionSignal(text);
+    expect(result).not.toBeNull();
+    expect(result!.advice).toBe("compact_soon");
+    expect(result!.safeToCompact).toEqual(["x"]);
 
-    await hook({
-      event: {
-        type: "session.next.text.ended",
-        properties: { sessionID: "s1", text: "compaction_advice: compact_now\nreason: x", timestamp: 1 },
-      },
-    });
-
-    expect(fired).toBe(false);
-    expect(getCompactionState("s1").lastSignal).toBeNull();
+    setLastSignal("test-session", result!);
+    const state = getCompactionState("test-session");
+    expect(state?.lastSignal?.advice).toBe("compact_soon");
   });
 
-  it("ignores non-text parts", async () => {
-    let fired = false;
-    const hook = createCompactionSignalHook(() => { fired = true; });
+  it("parses no_compact + setLastSignal", () => {
+    const text = "compaction_advice: no_compact\nreason: debug active";
+    const result = parseCompactionSignal(text);
+    expect(result).not.toBeNull();
+    expect(result!.advice).toBe("no_compact");
 
-    await hook({
-      event: {
-        type: "message.part.updated",
-        properties: {
-          sessionID: "s1",
-          part: {
-            id: "p1",
-            sessionID: "s1",
-            messageID: "m1",
-            type: "tool",
-            callID: "c1",
-            tool: "bash",
-            state: { status: "running", input: {}, raw: "ls", time: { start: 1 } },
-          },
-          time: 1,
-        },
-      },
-    });
-
-    expect(fired).toBe(false);
-    expect(getCompactionState("s1").lastSignal).toBeNull();
+    setLastSignal("test-session", result!);
+    const state = getCompactionState("test-session");
+    expect(state?.lastSignal?.advice).toBe("no_compact");
   });
 
-  it("ignores text without compaction signal", async () => {
-    let fired = false;
-    const hook = createCompactionSignalHook(() => { fired = true; });
+  it("overwrites previous signal on second call", () => {
+    const first = "compaction_advice: no_compact\nreason: first";
+    const second = "compaction_advice: compact_now\nreason: second\nsafe_to_compact: done";
 
-    await hook({
-      event: {
-        type: "message.part.updated",
-        properties: {
-          sessionID: "s1",
-          part: {
-            id: "p1",
-            sessionID: "s1",
-            messageID: "m1",
-            type: "text",
-            text: "Just a normal response without signal.",
-          },
-          time: 1,
-        },
-      },
-    });
+    setLastSignal("test-session", parseCompactionSignal(first)!);
+    setLastSignal("test-session", parseCompactionSignal(second)!);
 
-    expect(fired).toBe(false);
-    expect(getCompactionState("s1").lastSignal).toBeNull();
+    const state = getCompactionState("test-session");
+    expect(state?.lastSignal?.advice).toBe("compact_now");
+    expect(state?.lastSignal?.reason).toBe("second");
+    expect(state?.lastSignal?.safeToCompact).toEqual(["done"]);
   });
 
-  it("never throws on malformed input", async () => {
-    const hook = createCompactionSignalHook();
-
-    // Missing properties entirely
-    await hook({ event: { type: "message.part.updated", properties: {} } as never });
-    await hook({ event: { type: "message.part.updated" } } as never);
-    await hook({ event: { type: "unknown" } } as never);
-    await hook({ event: {} } as never);
-    await hook({} as never);
-
-    expect(getCompactionState("default").lastSignal).toBeNull();
+  it("returns null for text without signal", () => {
+    const result = parseCompactionSignal("Just a normal response.");
+    expect(result).toBeNull();
   });
 });
