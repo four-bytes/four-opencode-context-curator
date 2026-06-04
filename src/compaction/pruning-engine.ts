@@ -3,6 +3,7 @@ import {
   markAppliedPruning,
   wasAppliedPruning,
   addEvent,
+  isCompacting,
 } from "./state.js";
 import { writeDiaryEntry } from "./diary.js";
 
@@ -134,7 +135,7 @@ export function applyPruning(
 
   // Guard: no signal, no_compact, or not enough blocks → no-op
   // UNLESS CC_COMPACTION_TRIGGER is set → apply generic heuristics
-  const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
+  const triggered = isCompacting(cfg.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default");
   if (!triggered) {
     if (!signal || signal.advice === "no_compact" || signal.safeToCompact.length < cfg.minCompletedBlocks) {
       stats.prunedLines = stats.originalLines;
@@ -207,7 +208,7 @@ export function applyPruning(
     linesAfter: stats.prunedLines,
     reductionPct,
     sessionId: process.env.OPENDOC_SESSION_ID || "unknown",
-    triggered: process.env.CC_COMPACTION_TRIGGER === "true",
+    triggered: isCompacting(cfg.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default"),
   });
 
   return { contents: condensed, stats };

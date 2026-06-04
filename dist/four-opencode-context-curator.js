@@ -334,7 +334,8 @@ function getSessionState(sessionID = "default") {
       appliedForMessages: new Set,
       history: [],
       lastUserModel: { providerID: undefined, modelID: undefined },
-      lastTokenEstimate: 0
+      lastTokenEstimate: 0,
+      compactingActive: false
     };
     sessionStates.set(sessionID, s);
   }
@@ -377,6 +378,12 @@ function setLastUserModel(sessionID, providerID, modelID) {
 }
 function setLastTokenEstimate(sessionID, n) {
   getSessionState(sessionID).lastTokenEstimate = n;
+}
+function setCompacting(sessionID, active) {
+  getSessionState(sessionID).compactingActive = active;
+}
+function isCompacting(sessionID = "default") {
+  return getSessionState(sessionID).compactingActive;
 }
 var triggerCooldowns = new Map;
 var compactionCooldowns = new Map;
@@ -530,7 +537,7 @@ function applyPruning(layerContents, config = {}) {
     blocksCondensed: 0,
     duplicatesRemoved: 0
   };
-  const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
+  const triggered = isCompacting(cfg.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default");
   if (!triggered) {
     if (!signal || signal.advice === "no_compact" || signal.safeToCompact.length < cfg.minCompletedBlocks) {
       stats.prunedLines = stats.originalLines;
@@ -578,7 +585,7 @@ function applyPruning(layerContents, config = {}) {
     linesAfter: stats.prunedLines,
     reductionPct,
     sessionId: process.env.OPENDOC_SESSION_ID || "unknown",
-    triggered: process.env.CC_COMPACTION_TRIGGER === "true"
+    triggered: isCompacting(cfg.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default")
   });
   return { contents: condensed, stats };
 }
@@ -689,7 +696,7 @@ function compactMessageHistory(messages, sessionID) {
   const sid = sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default";
   const state = getCompactionState(sid);
   const signal = state.lastSignal;
-  const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
+  const triggered = isCompacting(sid);
   if (!triggered && (!signal || signal.advice === "no_compact")) {
     return {
       messagesBefore: messages.length,
@@ -737,7 +744,7 @@ function compactMessageHistory(messages, sessionID) {
     linesAfter: charsAfter,
     reductionPct,
     sessionId,
-    triggered: process.env.CC_COMPACTION_TRIGGER === "true"
+    triggered: isCompacting(sid)
   });
   logDebugEvent("compaction.applied", {
     messagesBefore,
@@ -844,8 +851,8 @@ var FourContextCuratorPlugin = async (ctx) => {
       try {
         const state = getCompactionState(sessionID);
         const signal = state.lastSignal;
-        const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
-        process.env.CC_COMPACTION_TRIGGER = "true";
+        const triggered = false;
+        setCompacting(sessionID, true);
         logDebugEvent("compaction.compacting", {
           triggered: true,
           advice: signal?.advice ?? "none"
@@ -878,11 +885,12 @@ var FourContextCuratorPlugin = async (ctx) => {
         }
       } catch {} finally {
         clearSignal(sessionID);
+        setCompacting(sessionID, false);
       }
     },
     "experimental.chat.messages.transform": async (_input, output) => {
+      const sessionID = _input?.sessionID ?? "default";
       try {
-        const sessionID = _input?.sessionID ?? "default";
         logDebugEvent("compaction.messages.transform", { messageCount: output.messages.length });
         let lastUserMsg;
         for (let i = output.messages.length - 1;i >= 0; i--) {
@@ -978,7 +986,7 @@ var FourContextCuratorPlugin = async (ctx) => {
         }
         clearTransformState(sessionID);
       } catch {} finally {
-        delete process.env.CC_COMPACTION_TRIGGER;
+        setCompacting(sessionID, false);
       }
     }
   };

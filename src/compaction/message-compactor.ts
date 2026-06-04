@@ -1,4 +1,4 @@
-import { getCompactionState, markAppliedMessages, wasAppliedMessages, addEvent } from "./state.js";
+import { getCompactionState, markAppliedMessages, wasAppliedMessages, addEvent, isCompacting } from "./state.js";
 import { writeDiaryEntry } from "./diary.js";
 import { logDebugEvent } from "../debug-logger.js";
 
@@ -98,7 +98,7 @@ export function compactMessageHistory(messages: MessageItem[], sessionID?: strin
   const state = getCompactionState(sid);
   const signal = state.lastSignal;
 
-  const triggered = process.env.CC_COMPACTION_TRIGGER === "true";
+  const triggered = isCompacting(sid);
 
   if (!triggered && (!signal || signal.advice === "no_compact")) {
     return {
@@ -168,7 +168,7 @@ export function compactMessageHistory(messages: MessageItem[], sessionID?: strin
     linesAfter: charsAfter,
     reductionPct,
     sessionId,
-    triggered: process.env.CC_COMPACTION_TRIGGER === "true",
+    triggered: isCompacting(sid),
   });
 
   logDebugEvent("compaction.applied", {

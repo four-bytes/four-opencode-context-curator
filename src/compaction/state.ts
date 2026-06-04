@@ -20,6 +20,7 @@ export interface CompactionState {
   history: CompactionEvent[];
   lastUserModel: LastUserModel;
   lastTokenEstimate: number;
+  compactingActive: boolean;
 }
 
 const sessionStates = new Map<string, CompactionState>();
@@ -35,6 +36,7 @@ function getSessionState(sessionID: string = "default"): CompactionState {
       history: [],
       lastUserModel: { providerID: undefined, modelID: undefined },
       lastTokenEstimate: 0,
+      compactingActive: false,
     };
     sessionStates.set(sessionID, s);
   }
@@ -111,6 +113,14 @@ export function setLastTokenEstimate(sessionID: string, n: number): void {
 
 export function getLastTokenEstimate(sessionID: string = "default"): number {
   return getSessionState(sessionID).lastTokenEstimate;
+}
+
+export function setCompacting(sessionID: string, active: boolean): void {
+  getSessionState(sessionID).compactingActive = active;
+}
+
+export function isCompacting(sessionID: string = "default"): boolean {
+  return getSessionState(sessionID).compactingActive;
 }
 
 const triggerCooldowns = new Map<string, number>();
