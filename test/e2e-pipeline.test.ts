@@ -82,6 +82,21 @@ describe("E2E Harness Smoke Test", () => {
     expect(output.messages[1].parts[0].text).not.toContain("compaction_advice");
     expect(mockSummarize).toHaveBeenCalledTimes(1);
   });
+
+  it("injects placeholder when assistant message is only a compaction signal", async () => {
+    const input = { sessionID: "e2e" };
+    const output = {
+      messages: [
+        { info: { role: "user" }, parts: [{ type: "text", text: "Hello" }] },
+        { info: { role: "assistant" }, parts: [{ type: "text", text: "… [compacted: reason]" }] },
+        { info: { role: "user" }, parts: [{ type: "text", text: "Next prompt" }] },
+      ],
+    };
+
+    messagesTransform(input, output);
+    expect(output.messages[1].parts).toHaveLength(1);
+    expect(output.messages[1].parts[0].text).toBe("… [compacted: reason]");
+  });
 });
 
 describe("E2E session.compacting", () => {

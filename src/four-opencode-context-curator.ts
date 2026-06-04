@@ -169,8 +169,6 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         }
 
         // Parse compaction signal from LAST assistant message in history
-        let signalMsgIndex = -1;
-        let signalReason = "";
         // (the LLM's previous response contains compaction_advice at the end)
         const msgs = output.messages as Array<{
           info?: { role?: string };
@@ -185,8 +183,6 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
             const signal = parseCompactionSignal(part.text);
             if (signal) {
               setLastSignal(sessionID, signal);
-              signalMsgIndex = i;
-              signalReason = signal.reason;
               logDebugEvent("compaction.signal.parsed", { advice: signal.advice, reason: signal.reason, sessionID });
 
               // Trigger native session compaction on compact_now
@@ -245,7 +241,8 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
           );
           const hasToolCall = m.parts.some((p) => p.type === "tool-call" || p.type === "tool_call");
           if (role === "assistant" && !hasNonEmptyText && !hasToolCall) {
-            const reason = (msgIdx === signalMsgIndex) ? signalReason : "";
+            const state = getCompactionState(sessionID);
+            const reason = state.lastSignal?.reason ?? "";
             m.parts.push({ type: "text", text: reason ? `\u2026 [compacted: ${reason}]` : "\u2026 [compacted]" });
             logDebugEvent("compaction.guard.placeholder_injected", { partCount: m.parts.length });
           }
