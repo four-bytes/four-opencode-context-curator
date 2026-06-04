@@ -112,7 +112,7 @@ describe("E2E session.compacting", () => {
     expect(String(output.prompt)).toContain("compacting an AI");
     expect(output.context[0]).toContain("Compaction advice");
     expect(output.context[1]).toContain("Safe to compact");
-    expect(getCompactionState("e2e").lastSignal).toBeNull();
+    expect(getCompactionState("e2e").lastSignal).not.toBeNull();
   });
 });
 

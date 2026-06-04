@@ -2,6 +2,11 @@
 
 ## [0.5.0] - 2026-06-04
 
+## [0.6.11] - 2026-06-05
+
+### Fixed
+- session.compacting clearSignal race (#122): `finally { clearSignal() }` entfernt — opencode führt session.compacting VOR messages.transform aus (compaction.ts:399 vs 406). Signal muss für messages.transform erhalten bleiben, sonst wird compact_now nie erkannt und summarize() nie getriggert.
+
 ## [0.6.9] - 2026-06-04
 
 ### Fixed
