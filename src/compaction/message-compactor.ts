@@ -143,6 +143,19 @@ export function compactMessageHistory(messages: MessageItem[], sessionID?: strin
       }
     }
     removed = removedCount;
+
+    // Warn when removal was expected but no messages could be removed
+    // (e.g. all messages are user-role — they contain task instructions and are preserved)
+    if (removedCount > 0) {
+      logDebugEvent("compaction.remove.applied", { removed: removedCount, messagesBefore, sessionId });
+    } else if (toRemove > 0) {
+      logDebugEvent("compaction.remove.stalled", {
+        reason: "all messages are user-role or non-removable",
+        toRemove,
+        messagesBefore,
+        sessionId,
+      });
+    }
   }
 
   // Step 2: Truncate long tool outputs

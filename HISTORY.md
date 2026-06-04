@@ -2,6 +2,11 @@
 
 ## [0.5.0] - 2026-06-04
 
+## [0.6.12] - 2026-06-05
+
+### Fixed
+- message-compactor removed:0 root cause (#82): Keine Messages entfernbar wenn der gesamte Verlauf aus User-Messages besteht (enthalten Task-Prompts und werden bewusst erhalten). Diagnostisches `compaction.remove.stalled` Debug-Event hinzugefügt + Reproducer-Tests.
+
 ## [0.6.11] - 2026-06-05
 
 ### Fixed

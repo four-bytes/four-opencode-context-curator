@@ -191,4 +191,44 @@ describe("compactMessageHistory", () => {
     expect(result.applied).toBe(true);
     expect(messages.length).toBe(20);
   });
+
+  // reproducer for GH-82: compact_now with only user messages → removed=0
+  describe("removed:0 edge case (GH-82)", () => {
+    it("logs stall when all messages are user-role on compact_now", () => {
+      const msgs: MessageItem[] = [];
+      for (let i = 0; i < 20; i++) {
+        msgs.push({ info: { role: "user" }, parts: [{ type: "text", text: `task prompt ${i}` }] });
+      }
+      clearSignal("gh82");
+      setLastSignal("gh82", { advice: "compact_now", reason: "test", safeToCompact: ["block1"] });
+      const result = compactMessageHistory(msgs, "gh82");
+      // All messages are user-role → nothing removed, but should not crash or hang
+      expect(result.messagesAfter).toBe(20); // user messages preserved
+      expect(result.applied).toBe(true);
+      expect(result.reductionPct).toBe(0); // no change since all user-role
+    });
+
+    it("removes non-user messages on compact_now with mixed roles", () => {
+      const msgs: MessageItem[] = [];
+      // 5 user messages
+      for (let i = 0; i < 5; i++) {
+        msgs.push({ info: { role: "user" }, parts: [{ type: "text", text: `task ${i}` }] });
+      }
+      // 15 assistant messages (old)
+      for (let i = 0; i < 15; i++) {
+        msgs.push({ info: { role: "assistant" }, parts: [{ type: "text", text: `response ${i}` }] });
+      }
+      // 5 more user messages (recent)
+      for (let i = 5; i < 10; i++) {
+        msgs.push({ info: { role: "user" }, parts: [{ type: "text", text: `task ${i}` }] });
+      }
+      clearSignal("gh82-mixed");
+      setLastSignal("gh82-mixed", { advice: "compact_now", reason: "mixed", safeToCompact: ["b1"] });
+      const result = compactMessageHistory(msgs, "gh82-mixed");
+      // KEEP_RECENT=15, oldest non-user (assistant) messages removed first
+      expect(result.messagesAfter).toBeGreaterThanOrEqual(15);
+      expect(result.messagesAfter).toBeLessThan(25);
+      expect(result.applied).toBe(true);
+    });
+  });
 });
