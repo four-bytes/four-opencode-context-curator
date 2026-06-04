@@ -379,13 +379,18 @@ function setLastUserModel(sessionID, providerID, modelID) {
 function setLastTokenEstimate(sessionID, n) {
   getSessionState(sessionID).lastTokenEstimate = n;
 }
-function setCompacting(sessionID, active) {
-  getSessionState(sessionID).compactingActive = active;
-}
 function isCompacting(sessionID = "default") {
   return getSessionState(sessionID).compactingActive;
 }
 var triggerCooldowns = new Map;
+function canTriggerCompaction(sessionID, cooldownMs = 30000) {
+  const now = Date.now();
+  const lastTriggered = triggerCooldowns.get(sessionID) ?? 0;
+  if (now - lastTriggered < cooldownMs)
+    return false;
+  triggerCooldowns.set(sessionID, now);
+  return true;
+}
 var compactionCooldowns = new Map;
 function isInCompactionCooldown(sessionID) {
   return (compactionCooldowns.get(sessionID) ?? 0) > 0;
@@ -454,7 +459,7 @@ var CACHE_DIR = join(homedir(), ".cache", "opencode", "four-opencode-context-cur
 function getDiaryPath() {
   const sessionId = process.env.OPENDOC_SESSION_ID || process.env.SESSION_ID || "unknown";
   const date = new Date().toISOString().split("T")[0];
-  return join(CACHE_DIR, `compaction-events-${date}.jsonl`);
+  return join(CACHE_DIR, `compaction-events-${sessionId}-${date}.jsonl`);
 }
 function ensureDir() {
   if (!existsSync(CACHE_DIR)) {
@@ -607,8 +612,9 @@ function getCacheDir() {
   return join2(os.homedir(), ".cache", "opencode", "four-opencode-context-curator");
 }
 function getLogPath() {
+  const sessionId = process.env.OPENDOC_SESSION_ID || process.env.SESSION_ID || "unknown";
   const date = new Date().toISOString().split("T")[0];
-  return join2(getCacheDir(), `debug-${date}.jsonl`);
+  return join2(getCacheDir(), `debug-${sessionId}-${date}.jsonl`);
 }
 function ensureDir2() {
   const dir = getCacheDir();
@@ -865,42 +871,33 @@ var FourContextCuratorPlugin = async (ctx) => {
       try {
         const state = getCompactionState(sessionID);
         const signal = state.lastSignal;
-        const triggered = isCompacting(sessionID);
-        setCompacting(sessionID, true);
         logDebugEvent("compaction.compacting", {
-          triggered: true,
           advice: signal?.advice ?? "none"
         });
-        if (!triggered && (!signal || signal.advice === "no_compact")) {
+        if (signal?.advice === "no_compact")
           return;
-        }
         if (signal && signal.safeToCompact.length > 0) {
           output.context.push(`Compaction advice: ${signal.advice} \u2014 ${signal.reason}`, `Safe to compact: ${signal.safeToCompact.join(", ")}`);
         }
-        if (triggered || signal?.advice === "compact_now") {
-          const lines = [
-            "You are compacting an AI coding assistant session.",
-            "PRIORITY ORDER (preserve first, condense later):",
-            "1. Active task context and current issue details \u2014 KEEP INTACT",
-            "2. User instructions and architectural decisions \u2014 KEEP INTACT",
-            "3. Recent tool outputs (last 5 turns) \u2014 KEEP",
-            "4. Completed issue resolutions \u2014 CONDENSE to 1-line summary",
-            "5. Duplicate tool outputs \u2014 REMOVE, reference first occurrence",
-            "6. Tool logs >50 lines \u2014 TRUNCATE to header+footer"
-          ];
-          if (signal) {
-            lines.push(`Signal: ${signal.advice} \u2014 ${signal.reason}`);
-          }
-          if (signal?.safeToCompact.length) {
-            lines.push(`Completed blocks: ${signal.safeToCompact.join(", ")}`);
-          }
-          output.prompt = lines.join(`
-`);
+        const lines = [
+          "You are compacting an AI coding assistant session.",
+          "PRIORITY ORDER (preserve first, condense later):",
+          "1. Active task context and current issue details \u2014 KEEP INTACT",
+          "2. User instructions and architectural decisions \u2014 KEEP INTACT",
+          "3. Recent tool outputs (last 5 turns) \u2014 KEEP",
+          "4. Completed issue resolutions \u2014 CONDENSE to 1-line summary",
+          "5. Duplicate tool outputs \u2014 REMOVE, reference first occurrence",
+          "6. Tool logs >50 lines \u2014 TRUNCATE to header+footer"
+        ];
+        if (signal) {
+          lines.push(`Signal: ${signal.advice} \u2014 ${signal.reason}`);
         }
-      } catch {} finally {
-        clearSignal(sessionID);
-        setCompacting(sessionID, false);
-      }
+        if (signal?.safeToCompact.length) {
+          lines.push(`Completed blocks: ${signal.safeToCompact.join(", ")}`);
+        }
+        output.prompt = lines.join(`
+`);
+      } catch {}
     },
     "experimental.chat.messages.transform": async (_input, output) => {
       const sessionID = _input?.sessionID ?? "default";
@@ -955,17 +952,20 @@ var FourContextCuratorPlugin = async (ctx) => {
             if (signal) {
               setLastSignal(sessionID, signal);
               logDebugEvent("compaction.signal.parsed", { advice: signal.advice, reason: signal.reason, sessionID });
-              if (signal.advice === "compact_now" && !isCompacting(sessionID)) {
+              if (signal.advice === "compact_now" && canTriggerCompaction(sessionID)) {
                 const userModel = getCompactionState(sessionID).lastUserModel;
-                client.session.summarize({
-                  path: { id: sessionID },
-                  query: { directory: process.cwd() },
-                  ...userModel.providerID && userModel.modelID ? { body: { providerID: userModel.providerID, modelID: userModel.modelID } } : {}
-                }).then(() => {
+                logDebugEvent("compaction.summarize.triggered", { sessionID, providerID: userModel.providerID, modelID: userModel.modelID });
+                try {
+                  await client.session.summarize({
+                    path: { id: sessionID },
+                    query: { directory: process.cwd() },
+                    ...userModel.providerID && userModel.modelID ? { body: { providerID: userModel.providerID, modelID: userModel.modelID } } : {},
+                    throwOnError: true
+                  });
                   logDebugEvent("compaction.summarize.completed", { sessionID });
-                }).catch((err) => {
+                } catch (err) {
                   logDebugEvent("compaction.summarize.error", { error: String(err), sessionID });
-                });
+                }
               }
               break;
             }
@@ -998,10 +998,9 @@ var FourContextCuratorPlugin = async (ctx) => {
             logDebugEvent("compaction.guard.placeholder_injected", { partCount: m.parts.length });
           }
         }
+        clearSignal(sessionID);
         clearTransformState(sessionID);
-      } catch {} finally {
-        setCompacting(sessionID, false);
-      }
+      } catch {}
     }
   };
 };

@@ -2,6 +2,15 @@
 
 ## [0.5.0] - 2026-06-04
 
+## [0.6.9] - 2026-06-04
+
+### Fixed
+- `compact_now`-Trigger: `summarize()` jetzt mit `await` statt fire-and-forget (`.then().catch()`) — Compaction wird vor dem nächsten LLM-Turn vollständig abgeschlossen, wie beim `/compact`-Slash-Command.
+- `throwOnError: true` zum `summarize()`-Call hinzugefügt — Fehler werden nicht mehr still geschluckt.
+- Double-Trigger-Guard: `canTriggerCompaction()` (30s-Cooldown) ersetzt den fehlerhaften `isCompacting`-Flag (wurde in `session.compacting.finally` zu früh zurückgesetzt).
+- `session.compacting`-Hook vereinfacht — injectiert nur noch Compaction-Instruktionen, kein Flag-Management mehr.
+- `lastSignal` wird jetzt am Ende von `messages.transform` zusammen mit `clearTransformState` bereinigt.
+
 ### Added
 - File-based Compaction Trigger (`src/compaction/file-trigger.ts`): Liest `~/.cache/opencode/four-opencode-context-curator/force-compact.json` in `messages.transform` und setzt das Compaction-Signal daraus. Ermöglicht manuelles Forcen von Compaction per Datei-Side-Channel — unabhängig vom LLM-generierten `compaction_advice`-Signal.
 - `test/file-trigger.test.ts`: 12 Tests für File-Trigger (valid JSON, empty file, invalid JSON, invalid advice, session override, case insensitivity)
