@@ -10,6 +10,11 @@ import { join } from "node:path";
 
 const CACHE_DIR = join(homedir(), ".cache", "opencode", "four-opencode-context-curator");
 
+function diaryPathFor(sessionId: string): string {
+  const date = new Date().toISOString().split("T")[0];
+  return join(CACHE_DIR, `compaction-events-${sessionId}-${date}.jsonl`);
+}
+
 describe("Compaction Integration", () => {
   let diaryPath: string;
 
@@ -18,16 +23,18 @@ describe("Compaction Integration", () => {
     if (!existsSync(CACHE_DIR)) {
       mkdirSync(CACHE_DIR, { recursive: true });
     }
-    const date = new Date().toISOString().split("T")[0];
-    diaryPath = join(CACHE_DIR, `compaction-events-${date}.jsonl`);
+    process.env.OPENDOC_SESSION_ID = "test";
+    diaryPath = diaryPathFor("test");
     // Remove existing diary to start fresh
     try { unlinkSync(diaryPath); } catch {}
   });
 
   afterEach(() => {
     clearSignal("test");
+    clearSignal("session-integration");
     getCompactionState("test").appliedFor.clear();
     setCompacting("test", false);
+    process.env.OPENDOC_SESSION_ID = "test";
   });
 
   afterAll(() => {
@@ -110,12 +117,15 @@ describe("Compaction Integration", () => {
       Array(100).fill("repeated log line").join("\n"),
     ];
 
+    process.env.OPENDOC_SESSION_ID = "session-integration";
+    const integDiaryPath = diaryPathFor("session-integration");
+    try { unlinkSync(integDiaryPath); } catch {}
+
     applyPruning(input, { sessionID: "session-integration" });
 
     // Verify diary was written
-    const diaryPath = join(CACHE_DIR, `compaction-events-${new Date().toISOString().split("T")[0]}.jsonl`);
-    expect(existsSync(diaryPath)).toBe(true);
-    const content = readFileSync(diaryPath, "utf-8");
+    expect(existsSync(integDiaryPath)).toBe(true);
+    const content = readFileSync(integDiaryPath, "utf-8");
     expect(content).toContain("compact_now");
     expect(content).toContain("integration test complete");
   });

@@ -22,7 +22,7 @@ function getDiaryPath(): string {
   // Use OPENDOC_SESSION_ID or fallback to "unknown"
   const sessionId = process.env.OPENDOC_SESSION_ID || process.env.SESSION_ID || "unknown";
   const date = new Date().toISOString().split("T")[0];
-  return join(CACHE_DIR, `compaction-events-${date}.jsonl`);
+  return join(CACHE_DIR, `compaction-events-${sessionId}-${date}.jsonl`);
 }
 
 function ensureDir(): void {

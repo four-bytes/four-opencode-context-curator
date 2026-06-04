@@ -13,8 +13,9 @@ function getCacheDir(): string {
 }
 
 function getLogPath(): string {
+  const sessionId = process.env.OPENDOC_SESSION_ID || process.env.SESSION_ID || "unknown";
   const date = new Date().toISOString().split("T")[0];
-  return join(getCacheDir(), `debug-${date}.jsonl`);
+  return join(getCacheDir(), `debug-${sessionId}-${date}.jsonl`);
 }
 
 function ensureDir(): void {

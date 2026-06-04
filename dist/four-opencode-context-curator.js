@@ -459,7 +459,7 @@ var CACHE_DIR = join(homedir(), ".cache", "opencode", "four-opencode-context-cur
 function getDiaryPath() {
   const sessionId = process.env.OPENDOC_SESSION_ID || process.env.SESSION_ID || "unknown";
   const date = new Date().toISOString().split("T")[0];
-  return join(CACHE_DIR, `compaction-events-${date}.jsonl`);
+  return join(CACHE_DIR, `compaction-events-${sessionId}-${date}.jsonl`);
 }
 function ensureDir() {
   if (!existsSync(CACHE_DIR)) {
@@ -612,8 +612,9 @@ function getCacheDir() {
   return join2(os.homedir(), ".cache", "opencode", "four-opencode-context-curator");
 }
 function getLogPath() {
+  const sessionId = process.env.OPENDOC_SESSION_ID || process.env.SESSION_ID || "unknown";
   const date = new Date().toISOString().split("T")[0];
-  return join2(getCacheDir(), `debug-${date}.jsonl`);
+  return join2(getCacheDir(), `debug-${sessionId}-${date}.jsonl`);
 }
 function ensureDir2() {
   const dir = getCacheDir();
