@@ -851,7 +851,7 @@ var FourContextCuratorPlugin = async (ctx) => {
       try {
         const state = getCompactionState(sessionID);
         const signal = state.lastSignal;
-        const triggered = false;
+        const triggered = isCompacting(sessionID);
         setCompacting(sessionID, true);
         logDebugEvent("compaction.compacting", {
           triggered: true,
@@ -941,12 +941,12 @@ var FourContextCuratorPlugin = async (ctx) => {
             if (signal) {
               setLastSignal(sessionID, signal);
               logDebugEvent("compaction.signal.parsed", { advice: signal.advice, reason: signal.reason, sessionID });
-              if (signal.advice === "compact_now") {
+              if (signal.advice === "compact_now" && !isCompacting(sessionID)) {
                 const userModel = getCompactionState(sessionID).lastUserModel;
                 client.session.summarize({
-                  sessionID,
-                  directory: process.cwd(),
-                  ...userModel.providerID && userModel.modelID ? { providerID: userModel.providerID, modelID: userModel.modelID } : {}
+                  path: { id: sessionID },
+                  query: { directory: process.cwd() },
+                  ...userModel.providerID && userModel.modelID ? { body: { providerID: userModel.providerID, modelID: userModel.modelID } } : {}
                 }).then(() => {
                   logDebugEvent("compaction.summarize.completed", { sessionID });
                 }).catch((err) => {

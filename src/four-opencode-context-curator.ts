@@ -9,7 +9,7 @@ import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
 import { parseCompactionSignal, stripCompactionSignal } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
-import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, setLastTokenEstimate, getLastTokenEstimate, setCompacting } from "./compaction/state.js";
+import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, setLastTokenEstimate, getLastTokenEstimate, setCompacting, isCompacting } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
 import { estimateMessageTokens } from "./compaction/tokens.js";
 import { logDebugEvent } from "./debug-logger.js";
@@ -70,7 +70,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       try {
         const state = getCompactionState(sessionID);
         const signal = state.lastSignal;
-        const triggered = false;
+        const triggered = isCompacting(sessionID);
 
         setCompacting(sessionID, true);
 
@@ -187,13 +187,15 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
               logDebugEvent("compaction.signal.parsed", { advice: signal.advice, reason: signal.reason, sessionID });
 
               // Trigger native session compaction on compact_now
-              if (signal.advice === "compact_now") {
+              // Guard: skip if already compacting (prevents double-trigger when
+              // messages.transform is called during native compaction flow)
+              if (signal.advice === "compact_now" && !isCompacting(sessionID)) {
                 const userModel = getCompactionState(sessionID).lastUserModel;
                 (client.session.summarize as (opts: Record<string, unknown>) => Promise<unknown>)({
-                  sessionID,
-                  directory: process.cwd(),
+                  path: { id: sessionID },
+                  query: { directory: process.cwd() },
                   ...(userModel.providerID && userModel.modelID
-                    ? { providerID: userModel.providerID, modelID: userModel.modelID }
+                    ? { body: { providerID: userModel.providerID, modelID: userModel.modelID } }
                     : {}),
                 }).then(() => {
                   logDebugEvent("compaction.summarize.completed", { sessionID });
