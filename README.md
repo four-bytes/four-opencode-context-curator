@@ -1,22 +1,22 @@
 # @four-bytes/four-opencode-context-curator
 
-opencode-Plugin: kuratiert Context vor LLM-Request — statt full-file nur geänderte Blöcke + N Kontext-Zeilen. Token-Budget-Steuerung.
+opencode Plugin: curates context before LLM requests — changed blocks + N context lines instead of full files. Token budget control.
 
 **Status:** Alpha v0.2.0 — Layered Prefix Architecture
 
 ## Architecture Layers
 
-| Layer | ID | Stabilität | TTL |
+| Layer | ID | Stability | TTL |
 |---|---|---|---|
-| Core Prefix | `core_prefix` | Global, stabil | — |
-| Repo Profile | `repo_profile` | Per Repo, semi-stabil | — |
+| Core Prefix | `core_prefix` | Global, stable | — |
+| Repo Profile | `repo_profile` | Per Repo, semi-stable | — |
 | Task Slice | `task_slice` | Per Session | 30 min |
 | Issue Slice | `issue_slice` | On-Demand | — |
 
-## Limitationen v0.2.0
-- Layer-Implementierungen folgen in #3 (core_prefix), #4 (repo_profile), #5 (task_slice + issue_slice)
-- Derzeit werden keine Layer-Inhalte generiert (leeres `layers[]`)
-- Pipeline + Cache + TTL-Mechanik voll funktionsfähig
+## Limitations v0.2.0
+- Layer implementations follow in #3 (core_prefix), #4 (repo_profile), #5 (task_slice + issue_slice)
+- Currently no layer content is generated (empty `layers[]`)
+- Pipeline + Cache + TTL mechanics fully functional
 
 ## License
 Apache-2.0 — Copyright 2025 Four Bytes
