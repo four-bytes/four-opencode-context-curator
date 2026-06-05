@@ -870,6 +870,37 @@ var FourContextCuratorPlugin = async (ctx) => {
   ];
   const hookCtx = createHookContext(DEFAULT_LAYERS, layers);
   const client = ctx.client;
+  async function triggerNativeCompaction(realSessionID) {
+    const userModel = getCompactionState(realSessionID).lastUserModel;
+    logDebugEvent("compaction.summarize.triggered", {
+      sessionID: realSessionID,
+      providerID: userModel.providerID,
+      modelID: userModel.modelID
+    });
+    try {
+      await client.session.summarize({
+        path: { id: realSessionID },
+        query: { directory: process.cwd() },
+        body: {
+          ...userModel.providerID ? { providerID: userModel.providerID } : {},
+          ...userModel.modelID ? { modelID: userModel.modelID } : {}
+        }
+      }, { throwOnError: true });
+      setCompactionCooldown(realSessionID, 3);
+      logDebugEvent("compaction.summarize.completed", {
+        sessionID: realSessionID,
+        cooldown: 3
+      });
+    } catch (err) {
+      const msg = `\x1B[31m[four-opencode-context-curator] \u274C compaction request failed (session=${realSessionID}): ${String(err)}\x1B[0m`;
+      process.stderr.write(msg + `
+`);
+      logDebugEvent("compaction.summarize.error", {
+        error: String(err),
+        sessionID: realSessionID
+      });
+    }
+  }
   return {
     "experimental.chat.system.transform": async (_input, output) => {
       const sessionID = _input?.sessionID ?? "default";
@@ -925,24 +956,6 @@ var FourContextCuratorPlugin = async (ctx) => {
       const sessionID = _input?.sessionID ?? "default";
       try {
         logDebugEvent("compaction.messages.transform", { messageCount: output.messages.length });
-        for (const m of output.messages) {
-          const msg = m;
-          if (msg.info?.role !== "user")
-            continue;
-          if (!Array.isArray(msg.parts))
-            continue;
-          for (const part of msg.parts) {
-            if (part.type !== "text" || !part.text)
-              continue;
-            const trigger = detectUserCompactionTrigger(part.text);
-            if (trigger.shouldCompact) {
-              if (trigger.mode === "compact_now") {
-                client.session.summarize().catch((err) => console.error("[four-context-curator] compaction failed:", err.message));
-              }
-              logDebugEvent("compaction.user_compact_detected", { mode: trigger.mode });
-            }
-          }
-        }
         let lastUserMsg;
         for (let i = output.messages.length - 1;i >= 0; i--) {
           const m = output.messages[i];
@@ -996,35 +1009,7 @@ var FourContextCuratorPlugin = async (ctx) => {
               const realSessionID = signalMsg?.info?.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "unknown";
               const inCooldown = getCompactionState(sessionID).compactingActive || getCompactionCooldownRemaining(sessionID) > 0;
               if (signal.advice === "compact_now" && !inCooldown) {
-                const userModel = getCompactionState(sessionID).lastUserModel;
-                logDebugEvent("compaction.summarize.triggered", {
-                  sessionID: realSessionID,
-                  providerID: userModel.providerID,
-                  modelID: userModel.modelID
-                });
-                try {
-                  await client.session.summarize({
-                    path: { id: realSessionID },
-                    query: { directory: process.cwd() },
-                    body: {
-                      ...userModel.providerID ? { providerID: userModel.providerID } : {},
-                      ...userModel.modelID ? { modelID: userModel.modelID } : {}
-                    }
-                  }, { throwOnError: true });
-                  setCompactionCooldown(sessionID, 3);
-                  logDebugEvent("compaction.summarize.completed", {
-                    sessionID: realSessionID,
-                    cooldown: 3
-                  });
-                } catch (err) {
-                  const msg = `\x1B[31m[four-opencode-context-curator] \u274C compaction request failed (session=${realSessionID}): ${String(err)}\x1B[0m`;
-                  process.stderr.write(msg + `
-`);
-                  logDebugEvent("compaction.summarize.error", {
-                    error: String(err),
-                    sessionID: realSessionID
-                  });
-                }
+                await triggerNativeCompaction(realSessionID);
               } else if (signal.advice === "compact_now" && inCooldown) {
                 logDebugEvent("compaction.summarize.cooldown_skipped", {
                   sessionID: realSessionID,
@@ -1056,34 +1041,7 @@ var FourContextCuratorPlugin = async (ctx) => {
               const realSessionID = signalMsg?.info?.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "unknown";
               const inCooldown = getCompactionState(sessionID).compactingActive || getCompactionCooldownRemaining(sessionID) > 0;
               if (result.mode === "compact_now" && !inCooldown) {
-                logDebugEvent("compaction.summarize.user_triggered", {
-                  sessionID: realSessionID,
-                  providerID: userModel.providerID,
-                  modelID: userModel.modelID
-                });
-                try {
-                  await client.session.summarize({
-                    path: { id: realSessionID },
-                    query: { directory: process.cwd() },
-                    body: {
-                      ...userModel.providerID ? { providerID: userModel.providerID } : {},
-                      ...userModel.modelID ? { modelID: userModel.modelID } : {}
-                    }
-                  }, { throwOnError: true });
-                  setCompactionCooldown(sessionID, 3);
-                  logDebugEvent("compaction.summarize.user_completed", {
-                    sessionID: realSessionID,
-                    cooldown: 3
-                  });
-                } catch (err) {
-                  const msg = `\x1B[31m[four-opencode-context-curator] \u274C user-triggered compaction failed (session=${realSessionID}): ${String(err)}\x1B[0m`;
-                  process.stderr.write(msg + `
-`);
-                  logDebugEvent("compaction.summarize.user_error", {
-                    error: String(err),
-                    sessionID: realSessionID
-                  });
-                }
+                await triggerNativeCompaction(realSessionID);
               } else if (result.mode === "compact_now" && inCooldown) {
                 logDebugEvent("compaction.summarize.user_cooldown_skipped", {
                   sessionID: realSessionID,
@@ -1130,6 +1088,7 @@ var FourContextCuratorPlugin = async (ctx) => {
 };
 var four_opencode_context_curator_default = FourContextCuratorPlugin;
 export {
+  detectUserCompactionTrigger,
   four_opencode_context_curator_default as default,
   FourContextCuratorPlugin
 };

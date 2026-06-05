@@ -20,7 +20,7 @@ import { logDebugEvent } from "./debug-logger.js";
  *   - "compact now", "force compact", "/compact" → compact_now
  *   - "compact soon" → compact_soon
  */
-function detectUserCompactionTrigger(text: string): { shouldCompact: boolean; mode: 'compact_now' | 'compact_soon' | 'no_compact' } {
+export function detectUserCompactionTrigger(text: string): { shouldCompact: boolean; mode: 'compact_now' | 'compact_soon' | 'no_compact' } {
   const lower = text.toLowerCase().trim();
 
   if (lower.startsWith('/compact')) {
@@ -72,6 +72,44 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
 
   const hookCtx = createHookContext(DEFAULT_LAYERS, layers);
   const client = ctx.client; // Capture client for summarize() call
+
+  /**
+   * Trigger native opencode session compaction (same as /compact slash command).
+   * Uses provider/model from the last user message for the summarization agent.
+   */
+  async function triggerNativeCompaction(realSessionID: string): Promise<void> {
+    const userModel = getCompactionState(realSessionID).lastUserModel;
+    logDebugEvent("compaction.summarize.triggered", {
+      sessionID: realSessionID,
+      providerID: userModel.providerID,
+      modelID: userModel.modelID,
+    });
+    try {
+      await (client.session.summarize as any)(
+        {
+          path: { id: realSessionID },
+          query: { directory: process.cwd() },
+          body: {
+            ...(userModel.providerID ? { providerID: userModel.providerID } : {}),
+            ...(userModel.modelID ? { modelID: userModel.modelID } : {}),
+          },
+        },
+        { throwOnError: true },
+      );
+      setCompactionCooldown(realSessionID, 3);
+      logDebugEvent("compaction.summarize.completed", {
+        sessionID: realSessionID,
+        cooldown: 3,
+      });
+    } catch (err) {
+      const msg = `\x1b[31m[four-opencode-context-curator] ❌ compaction request failed (session=${realSessionID}): ${String(err)}\x1b[0m`;
+      process.stderr.write(msg + "\n");
+      logDebugEvent("compaction.summarize.error", {
+        error: String(err),
+        sessionID: realSessionID,
+      });
+    }
+  }
 
   return {
     "experimental.chat.system.transform": async (_input, output) => {
@@ -135,25 +173,6 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       const sessionID = (_input as any)?.sessionID ?? "default";
       try {
         logDebugEvent("compaction.messages.transform", { messageCount: output.messages.length });
-
-        // Handle user-triggered compaction request
-        for (const m of output.messages) {
-          const msg = m as { info?: { role?: string }; parts?: Array<{ type: string; text?: string }> };
-          if (msg.info?.role !== "user") continue;
-          if (!Array.isArray(msg.parts)) continue;
-          for (const part of msg.parts) {
-            if (part.type !== "text" || !part.text) continue;
-            const trigger = detectUserCompactionTrigger(part.text);
-            if (trigger.shouldCompact) {
-              if (trigger.mode === 'compact_now') {
-                client.session.summarize().catch((err: Error) =>
-                  console.error('[four-context-curator] compaction failed:', err.message)
-                );
-              }
-              logDebugEvent("compaction.user_compact_detected", { mode: trigger.mode });
-            }
-          }
-        }
 
         // Derive provider/model from last user message for summarize candidate
         let lastUserMsg: (typeof output.messages)[number] | undefined;
@@ -227,37 +246,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
               const inCooldown = (getCompactionState(sessionID).compactingActive) ||
                 ((getCompactionCooldownRemaining(sessionID) > 0));
               if (signal.advice === "compact_now" && !inCooldown) {
-                const userModel = getCompactionState(sessionID).lastUserModel;
-                logDebugEvent("compaction.summarize.triggered", {
-                  sessionID: realSessionID,
-                  providerID: userModel.providerID,
-                  modelID: userModel.modelID,
-                });
-                try {
-                  await (client.session.summarize as any)(
-                    {
-                      path: { id: realSessionID },
-                      query: { directory: process.cwd() },
-                      body: {
-                        ...(userModel.providerID ? { providerID: userModel.providerID } : {}),
-                        ...(userModel.modelID ? { modelID: userModel.modelID } : {}),
-                      },
-                    },
-                    { throwOnError: true },
-                  );
-                  setCompactionCooldown(sessionID, 3);
-                  logDebugEvent("compaction.summarize.completed", {
-                    sessionID: realSessionID,
-                    cooldown: 3,
-                  });
-                } catch (err) {
-                  const msg = `\x1b[31m[four-opencode-context-curator] ❌ compaction request failed (session=${realSessionID}): ${String(err)}\x1b[0m`;
-                  process.stderr.write(msg + "\n");
-                  logDebugEvent("compaction.summarize.error", {
-                    error: String(err),
-                    sessionID: realSessionID,
-                  });
-                }
+                await triggerNativeCompaction(realSessionID);
               } else if (signal.advice === "compact_now" && inCooldown) {
                 logDebugEvent("compaction.summarize.cooldown_skipped", {
                   sessionID: realSessionID,
@@ -294,36 +283,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
                 (getCompactionCooldownRemaining(sessionID) > 0);
 
               if (result.mode === "compact_now" && !inCooldown) {
-                logDebugEvent("compaction.summarize.user_triggered", {
-                  sessionID: realSessionID,
-                  providerID: userModel.providerID,
-                  modelID: userModel.modelID,
-                });
-                try {
-                  await (client.session.summarize as any)(
-                    {
-                      path: { id: realSessionID },
-                      query: { directory: process.cwd() },
-                      body: {
-                        ...(userModel.providerID ? { providerID: userModel.providerID } : {}),
-                        ...(userModel.modelID ? { modelID: userModel.modelID } : {}),
-                      },
-                    },
-                    { throwOnError: true },
-                  );
-                  setCompactionCooldown(sessionID, 3);
-                  logDebugEvent("compaction.summarize.user_completed", {
-                    sessionID: realSessionID,
-                    cooldown: 3,
-                  });
-                } catch (err) {
-                  const msg = `\x1b[31m[four-opencode-context-curator] ❌ user-triggered compaction failed (session=${realSessionID}): ${String(err)}\x1b[0m`;
-                  process.stderr.write(msg + "\n");
-                  logDebugEvent("compaction.summarize.user_error", {
-                    error: String(err),
-                    sessionID: realSessionID,
-                  });
-                }
+                await triggerNativeCompaction(realSessionID);
               } else if (result.mode === "compact_now" && inCooldown) {
                 logDebugEvent("compaction.summarize.user_cooldown_skipped", {
                   sessionID: realSessionID,
