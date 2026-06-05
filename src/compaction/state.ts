@@ -79,7 +79,11 @@ export function clearTransformState(sessionID: string = "default"): void {
 }
 
 export function addEvent(sessionID: string, event: CompactionEvent): void {
-  getSessionState(sessionID).history.push(event);
+  const state = getSessionState(sessionID);
+  state.history.push(event);
+  if (state.history.length > 100) {
+    state.history = state.history.slice(-50);
+  }
 }
 
 export function setLastUserModel(sessionID: string, providerID: string | undefined, modelID: string | undefined): void {
@@ -89,10 +93,6 @@ export function setLastUserModel(sessionID: string, providerID: string | undefin
 
 export function setLastTokenEstimate(sessionID: string, n: number): void {
   getSessionState(sessionID).lastTokenEstimate = n;
-}
-
-export function setCompacting(sessionID: string, active: boolean): void {
-  getSessionState(sessionID).compactingActive = active;
 }
 
 const compactionCooldowns = new Map<string, number>();

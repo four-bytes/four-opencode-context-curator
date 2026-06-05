@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "bun:test";
 import { applyPruning } from "../src/compaction/pruning-engine.js";
-import { setLastSignal, clearSignal, setCompacting } from "../src/compaction/state.js";
+import { setLastSignal, clearSignal } from "../src/compaction/state.js";
 import { writeDiaryEntry } from "../src/compaction/diary.js";
 import { compactMessageHistory } from "../src/compaction/message-compactor.js";
 import { parseCompactionSignal, type CompactionSignal } from "../src/compaction/signal-parser.js";
@@ -32,7 +32,6 @@ describe("Compaction Integration", () => {
   afterEach(() => {
     clearSignal("test");
     clearSignal("session-integration");
-    setCompacting("test", false);
     process.env.OPENDOC_SESSION_ID = "test";
   });
 
@@ -150,7 +149,6 @@ describe("Compaction Integration", () => {
   });
 
   it("trigger-only compactMessageHistory applies generic heuristics", async () => {
-    setCompacting("test", true);
     clearSignal("test");
 
     const messages = [
@@ -166,7 +164,6 @@ describe("Compaction Integration", () => {
     // Should have reduced chars (long message truncated)
     expect(result.charsAfter).toBeLessThan(result.charsBefore);
 
-    setCompacting("test", false);
     clearSignal("test");
   });
 });

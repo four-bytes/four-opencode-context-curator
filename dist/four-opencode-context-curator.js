@@ -345,7 +345,11 @@ function clearTransformState(sessionID = "default") {
   s.appliedForMessages.clear();
 }
 function addEvent(sessionID, event) {
-  getSessionState(sessionID).history.push(event);
+  const state = getSessionState(sessionID);
+  state.history.push(event);
+  if (state.history.length > 100) {
+    state.history = state.history.slice(-50);
+  }
 }
 function setLastUserModel(sessionID, providerID, modelID) {
   getSessionState(sessionID).lastUserModel = { providerID, modelID };
