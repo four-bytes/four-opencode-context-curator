@@ -84,8 +84,8 @@ describe("E2E Harness Smoke Test", () => {
     expect(mockSummarize).toHaveBeenCalledTimes(1);
     const callArg = mockSummarize.mock.calls[0][0];
     const expectedSessionID = process.env.OPENDOC_SESSION_ID ?? "unknown";
-    expect(callArg.sessionID).toBe(expectedSessionID);
-    expect(callArg.directory).toBeDefined();
+    expect(callArg.path.id).toBe(expectedSessionID);
+    expect(callArg.query.directory).toBeDefined();
   });
 
   it("injects placeholder when assistant message is only a compaction signal", async () => {

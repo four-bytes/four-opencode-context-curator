@@ -7,12 +7,38 @@ import { RepoProfileLayer } from "./layers/repo-profile.js";
 import { TaskSliceLayer } from "./layers/task-slice.js";
 import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
-import { parseCompactionSignal, stripCompactionSignal } from "./compaction/signal-parser.js";
+import { parseCompactionSignal, stripCompactionSignal, type CompactionSignal } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
 import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, setLastTokenEstimate, getLastTokenEstimate, getCompactionCooldownRemaining, setCompactionCooldown, decrementCompactionCooldown } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
 import { estimateMessageTokens } from "./compaction/tokens.js";
 import { logDebugEvent } from "./debug-logger.js";
+
+/**
+ * Detect if a user message is requesting compaction.
+ * Supports:
+ *   - "compact now", "force compact", "/compact" → compact_now
+ *   - "compact soon" → compact_soon
+ */
+function detectUserCompactionTrigger(text: string): { shouldCompact: boolean; mode: 'compact_now' | 'compact_soon' | 'no_compact' } {
+  const lower = text.toLowerCase().trim();
+
+  if (lower.startsWith('/compact')) {
+    return { shouldCompact: true, mode: 'compact_now' };
+  }
+
+  // "compact now" or "force compact" → compact_now
+  if (/^(compact now|force compact)/i.test(lower)) {
+    return { shouldCompact: true, mode: 'compact_now' };
+  }
+
+  // "compact soon" → compact_soon (informational only)
+  if (lower.startsWith('compact soon')) {
+    return { shouldCompact: true, mode: 'compact_soon' };
+  }
+
+  return { shouldCompact: false, mode: 'no_compact' };
+}
 
 /**
  * Curates system prompt context via layered cacheable prefixes.
@@ -110,6 +136,25 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       try {
         logDebugEvent("compaction.messages.transform", { messageCount: output.messages.length });
 
+        // Handle user-triggered compaction request
+        for (const m of output.messages) {
+          const msg = m as { info?: { role?: string }; parts?: Array<{ type: string; text?: string }> };
+          if (msg.info?.role !== "user") continue;
+          if (!Array.isArray(msg.parts)) continue;
+          for (const part of msg.parts) {
+            if (part.type !== "text" || !part.text) continue;
+            const trigger = detectUserCompactionTrigger(part.text);
+            if (trigger.shouldCompact) {
+              if (trigger.mode === 'compact_now') {
+                client.session.summarize().catch((err: Error) =>
+                  console.error('[four-context-curator] compaction failed:', err.message)
+                );
+              }
+              logDebugEvent("compaction.user_compact_detected", { mode: trigger.mode });
+            }
+          }
+        }
+
         // Derive provider/model from last user message for summarize candidate
         let lastUserMsg: (typeof output.messages)[number] | undefined;
         for (let i = output.messages.length - 1; i >= 0; i--) {
@@ -160,7 +205,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         // Parse compaction signal from LAST assistant message in history
         // (the LLM's previous response contains compaction_advice at the end)
         const msgs = output.messages as Array<{
-          info?: { role?: string };
+          info?: { role?: string; sessionID?: string };
           parts?: Array<{ type: string; text?: string }>;
         }>;
         for (let i = msgs.length - 1; i >= 0; i--) {
@@ -176,7 +221,9 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
 
               // Trigger native session compaction on compact_now — same as /compact slash command.
               // Guard: 3-turns cooldown prevents double-trigger during nested compaction flows.
-              const realSessionID = process.env.OPENDOC_SESSION_ID;
+              // Extract sessionID from messages (every message carries session's ID)
+              const signalMsg = msgs.find(m => m.info?.sessionID);
+              const realSessionID = signalMsg?.info?.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "unknown";
               const inCooldown = (getCompactionState(sessionID).compactingActive) ||
                 ((getCompactionCooldownRemaining(sessionID) > 0));
               if (signal.advice === "compact_now" && !inCooldown) {
@@ -189,10 +236,12 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
                 try {
                   await (client.session.summarize as any)(
                     {
-                      sessionID: realSessionID ?? "unknown",
-                      directory: process.cwd(),
-                      providerID: userModel.providerID || undefined,
-                      modelID: userModel.modelID || undefined,
+                      path: { id: realSessionID },
+                      query: { directory: process.cwd() },
+                      body: {
+                        ...(userModel.providerID ? { providerID: userModel.providerID } : {}),
+                        ...(userModel.modelID ? { modelID: userModel.modelID } : {}),
+                      },
                     },
                     { throwOnError: true },
                   );
@@ -220,6 +269,71 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
             }
           }
           break; // Only process the most recent assistant message
+        }
+
+        // --- User-triggered compaction detection ---
+        // Check if the last user message contains a compaction trigger phrase.
+        const finalUserMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+        if (finalUserMsg?.info?.role === "user" && Array.isArray(finalUserMsg.parts)) {
+          for (const part of finalUserMsg.parts) {
+            if (part.type !== "text" || !part.text) continue;
+            const result = detectUserCompactionTrigger(part.text);
+            if (result.shouldCompact) {
+              const userModel = getCompactionState(sessionID).lastUserModel;
+              const userSignal: CompactionSignal = {
+                advice: result.mode === "compact_now" ? "compact_now" : "compact_soon",
+                reason: `User-requested ${result.mode}`,
+                safeToCompact: ["user_requested"],
+              };
+              setLastSignal(sessionID, userSignal);
+              logDebugEvent("compaction.user_triggered", { advice: result.mode, sessionID });
+
+              const signalMsg = msgs.find(m => m.info?.sessionID);
+              const realSessionID = signalMsg?.info?.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "unknown";
+              const inCooldown = getCompactionState(sessionID).compactingActive ||
+                (getCompactionCooldownRemaining(sessionID) > 0);
+
+              if (result.mode === "compact_now" && !inCooldown) {
+                logDebugEvent("compaction.summarize.user_triggered", {
+                  sessionID: realSessionID,
+                  providerID: userModel.providerID,
+                  modelID: userModel.modelID,
+                });
+                try {
+                  await (client.session.summarize as any)(
+                    {
+                      path: { id: realSessionID },
+                      query: { directory: process.cwd() },
+                      body: {
+                        ...(userModel.providerID ? { providerID: userModel.providerID } : {}),
+                        ...(userModel.modelID ? { modelID: userModel.modelID } : {}),
+                      },
+                    },
+                    { throwOnError: true },
+                  );
+                  setCompactionCooldown(sessionID, 3);
+                  logDebugEvent("compaction.summarize.user_completed", {
+                    sessionID: realSessionID,
+                    cooldown: 3,
+                  });
+                } catch (err) {
+                  const msg = `\x1b[31m[four-opencode-context-curator] ❌ user-triggered compaction failed (session=${realSessionID}): ${String(err)}\x1b[0m`;
+                  process.stderr.write(msg + "\n");
+                  logDebugEvent("compaction.summarize.user_error", {
+                    error: String(err),
+                    sessionID: realSessionID,
+                  });
+                }
+              } else if (result.mode === "compact_now" && inCooldown) {
+                logDebugEvent("compaction.summarize.user_cooldown_skipped", {
+                  sessionID: realSessionID,
+                  cooldownRemaining: getCompactionCooldownRemaining(sessionID),
+                  compactingActive: getCompactionState(sessionID).compactingActive,
+                });
+              }
+              break;
+            }
+          }
         }
 
         // Decrement turns-based compaction cooldown each messages.transform
