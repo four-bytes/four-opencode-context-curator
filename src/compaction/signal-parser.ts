@@ -31,3 +31,5 @@ export function parseCompactionSignal(text: string): CompactionSignal | null {
 export function stripCompactionSignal(text: string): string {
   return text.replace(/\n*compaction_advice:.*[\s\S]*$/i, "").trimEnd();
 }
+
+

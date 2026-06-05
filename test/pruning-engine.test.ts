@@ -5,7 +5,7 @@ import {
   condenseIssueSlice,
   applyPruning,
 } from "../src/compaction/pruning-engine.js";
-import { setLastSignal, clearSignal, getCompactionState } from "../src/compaction/state.js";
+import { setLastSignal, clearSignal } from "../src/compaction/state.js";
 import type { CompactionSignal } from "../src/compaction/signal-parser.js";
 
 describe("truncateToolLogs", () => {
@@ -77,7 +77,6 @@ describe("applyPruning", () => {
   afterEach(() => {
     // Reset state between tests
     clearSignal("test");
-    getCompactionState("test").appliedFor.clear();
   });
 
   it("no-op when no signal set", () => {

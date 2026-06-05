@@ -2,43 +2,16 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { DEFAULT_LAYERS, type Layer } from "./layers.js";
 import { createHookContext, runLayerPipeline } from "./hook.js";
 import { sanitizeLayerContent } from "./sanitize.js";
-import { CorePrefixLayer } from "./layers/core-prefix.js";
 import { RepoProfileLayer } from "./layers/repo-profile.js";
 import { TaskSliceLayer } from "./layers/task-slice.js";
 import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
-import { parseCompactionSignal, stripCompactionSignal, type CompactionSignal } from "./compaction/signal-parser.js";
+import { parseCompactionSignal, stripCompactionSignal } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
-import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, setLastTokenEstimate, getLastTokenEstimate, getCompactionCooldownRemaining, setCompactionCooldown, decrementCompactionCooldown } from "./compaction/state.js";
+import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, setLastTokenEstimate, getCompactionCooldownRemaining, setCompactionCooldown, decrementCompactionCooldown, incrementTurnsSinceCompaction, resetTurnsSinceCompaction, getTurnsSinceCompaction, isInstructionSent, markInstructionSent } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
 import { estimateMessageTokens } from "./compaction/tokens.js";
 import { logDebugEvent } from "./debug-logger.js";
-
-/**
- * Detect if a user message is requesting compaction.
- * Supports:
- *   - "compact now", "force compact", "/compact" → compact_now
- *   - "compact soon" → compact_soon
- */
-export function detectUserCompactionTrigger(text: string): { shouldCompact: boolean; mode: 'compact_now' | 'compact_soon' | 'no_compact' } {
-  const lower = text.toLowerCase().trim();
-
-  if (lower.startsWith('/compact')) {
-    return { shouldCompact: true, mode: 'compact_now' };
-  }
-
-  // "compact now" or "force compact" → compact_now
-  if (/^(compact now|force compact)/i.test(lower)) {
-    return { shouldCompact: true, mode: 'compact_now' };
-  }
-
-  // "compact soon" → compact_soon (informational only)
-  if (lower.startsWith('compact soon')) {
-    return { shouldCompact: true, mode: 'compact_soon' };
-  }
-
-  return { shouldCompact: false, mode: 'no_compact' };
-}
 
 /**
  * Curates system prompt context via layered cacheable prefixes.
@@ -64,7 +37,6 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
   }
 
   const layers: Layer[] = [
-    new CorePrefixLayer(),
     new RepoProfileLayer(),
     new TaskSliceLayer(),
     new IssueSliceLayer(),
@@ -120,14 +92,14 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       if (layerContents.length > 0) {
         const sanitized = layerContents.map(sanitizeLayerContent);
         const pruned = applyPruning(sanitized, { sessionID });
-        const prefix = [
-          "── CONTEXT CURATOR (Layered Cacheable Prefixes) ──",
-          ...pruned.contents,
-        ].join("\n\n");
+        const prefix = pruned.contents.join("\n\n");
         output.system.push(prefix);
       }
 
-      output.system.push(createCompactionInstruction(sessionID));
+      if (!isInstructionSent(sessionID)) {
+        output.system.push(createCompactionInstruction(sessionID));
+        markInstructionSent(sessionID);
+      }
     },
     "experimental.session.compacting": async (input, output) => {
       const sessionID = (input as any)?.sessionID ?? "default";
@@ -141,28 +113,12 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
 
         if (signal?.advice === "no_compact") return;
 
-        if (signal && signal.safeToCompact.length > 0) {
-          output.context.push(
-            `Compaction advice: ${signal.advice} — ${signal.reason}`,
-            `Safe to compact: ${signal.safeToCompact.join(", ")}`,
-          );
-        }
-
         const lines: string[] = [
-          "You are compacting an AI coding assistant session.",
-          "PRIORITY ORDER (preserve first, condense later):",
-          "1. Active task context and current issue details — KEEP INTACT",
-          "2. User instructions and architectural decisions — KEEP INTACT",
-          "3. Recent tool outputs (last 5 turns) — KEEP",
-          "4. Completed issue resolutions — CONDENSE to 1-line summary",
-          "5. Duplicate tool outputs — REMOVE, reference first occurrence",
-          "6. Tool logs >50 lines — TRUNCATE to header+footer",
+          "Compacting session. Preserve: active task, user instructions, recent 5 turns.",
+          "Condense: completed issues. Truncate: >50-line tool logs.",
         ];
         if (signal) {
-          lines.push(`Signal: ${signal.advice} — ${signal.reason}`);
-        }
-        if (signal?.safeToCompact.length) {
-          lines.push(`Completed blocks: ${signal.safeToCompact.join(", ")}`);
+          lines.push(`Signal: ${signal.advice}`);
         }
         output.prompt = lines.join("\n");
       } catch {
@@ -247,12 +203,14 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
                 ((getCompactionCooldownRemaining(sessionID) > 0));
               if (signal.advice === "compact_now" && !inCooldown) {
                 await triggerNativeCompaction(realSessionID);
+                clearSignal(sessionID); // skip plugin compaction — native summarize handles it
               } else if (signal.advice === "compact_now" && inCooldown) {
                 logDebugEvent("compaction.summarize.cooldown_skipped", {
                   sessionID: realSessionID,
                   cooldownRemaining: getCompactionCooldownRemaining(sessionID),
                   compactingActive: getCompactionState(sessionID).compactingActive,
                 });
+                clearSignal(sessionID); // still clear to avoid plugin compaction
               }
               break;
             }
@@ -260,44 +218,9 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
           break; // Only process the most recent assistant message
         }
 
-        // --- User-triggered compaction detection ---
-        // Check if the last user message contains a compaction trigger phrase.
-        const finalUserMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
-        if (finalUserMsg?.info?.role === "user" && Array.isArray(finalUserMsg.parts)) {
-          for (const part of finalUserMsg.parts) {
-            if (part.type !== "text" || !part.text) continue;
-            const result = detectUserCompactionTrigger(part.text);
-            if (result.shouldCompact) {
-              const userModel = getCompactionState(sessionID).lastUserModel;
-              const userSignal: CompactionSignal = {
-                advice: result.mode === "compact_now" ? "compact_now" : "compact_soon",
-                reason: `User-requested ${result.mode}`,
-                safeToCompact: ["user_requested"],
-              };
-              setLastSignal(sessionID, userSignal);
-              logDebugEvent("compaction.user_triggered", { advice: result.mode, sessionID });
-
-              const signalMsg = msgs.find(m => m.info?.sessionID);
-              const realSessionID = signalMsg?.info?.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "unknown";
-              const inCooldown = getCompactionState(sessionID).compactingActive ||
-                (getCompactionCooldownRemaining(sessionID) > 0);
-
-              if (result.mode === "compact_now" && !inCooldown) {
-                await triggerNativeCompaction(realSessionID);
-              } else if (result.mode === "compact_now" && inCooldown) {
-                logDebugEvent("compaction.summarize.user_cooldown_skipped", {
-                  sessionID: realSessionID,
-                  cooldownRemaining: getCompactionCooldownRemaining(sessionID),
-                  compactingActive: getCompactionState(sessionID).compactingActive,
-                });
-              }
-              break;
-            }
-          }
-        }
-
         // Decrement turns-based compaction cooldown each messages.transform
         decrementCompactionCooldown(sessionID);
+        incrementTurnsSinceCompaction(sessionID);
 
         compactMessageHistory(
           output.messages as Array<{
@@ -314,6 +237,20 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         }
         setLastTokenEstimate(sessionID, totalTokens);
         logDebugEvent("compaction.tokens.estimated", { totalTokens, messageCount: output.messages.length });
+
+        // Auto-trigger: tokens > 50k AND 3+ turns since last compaction → compact_now
+        const AUTO_TOKEN_THRESHOLD = 50000;
+        const AUTO_TURN_THRESHOLD = 3;
+        const turnsSince = getTurnsSinceCompaction(sessionID);
+        const inCooldown = getCompactionState(sessionID).compactingActive || (getCompactionCooldownRemaining(sessionID) > 0);
+
+        if (totalTokens > AUTO_TOKEN_THRESHOLD && turnsSince >= AUTO_TURN_THRESHOLD && !inCooldown) {
+          const signalMsg2 = msgs.find(m => m.info?.sessionID);
+          const realSid2 = signalMsg2?.info?.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "unknown";
+          logDebugEvent("compaction.auto_trigger", { totalTokens, turnsSince, sessionID: realSid2 });
+          await triggerNativeCompaction(realSid2);
+          resetTurnsSinceCompaction(sessionID);
+        }
 
         // Strip compaction_signal from visible output
         for (let msgIdx = 0; msgIdx < output.messages.length; msgIdx++) {

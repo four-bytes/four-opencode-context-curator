@@ -3,11 +3,45 @@ var __require = import.meta.require;
 
 // src/layers.ts
 var DEFAULT_LAYERS = [
-  { id: "core_prefix", order: 1, enabled: true },
   { id: "repo_profile", order: 2, enabled: true },
   { id: "task_slice", order: 3, enabled: true, ttlMs: 30 * 60 * 1000 },
   { id: "issue_slice", order: 4, enabled: true }
 ];
+
+// src/hook.ts
+function createHookContext(configs, layers) {
+  return {
+    layers,
+    configs,
+    cache: new Map
+  };
+}
+async function runLayerPipeline(ctx) {
+  const results = [];
+  const enabled = ctx.configs.filter((c) => c.enabled).sort((a, b) => a.order - b.order);
+  for (const config of enabled) {
+    const layer = ctx.layers.find((l) => l.config.id === config.id);
+    if (!layer)
+      continue;
+    if (config.ttlMs) {
+      const cached = ctx.cache.get(config.id);
+      if (cached && Date.now() - cached.updatedAt < config.ttlMs) {
+        results.push(cached.content);
+        continue;
+      }
+    }
+    try {
+      const content = await layer.generate();
+      ctx.cache.set(config.id, content);
+      if (content.content.trim()) {
+        results.push(content.content);
+      }
+    } catch (err) {
+      console.warn(`[four-cc] layer '${config.id}' failed:`, err);
+    }
+  }
+  return results;
+}
 
 // src/sanitize.ts
 function sanitizeLayerContent(content) {
@@ -38,90 +72,6 @@ function sanitizeLayerContent(content) {
 `);
 }
 
-// src/hook.ts
-function createHookContext(configs, layers) {
-  return {
-    layers,
-    configs,
-    cache: new Map
-  };
-}
-async function runLayerPipeline(ctx) {
-  const results = [];
-  const enabled = ctx.configs.filter((c) => c.enabled).sort((a, b) => a.order - b.order);
-  for (const config of enabled) {
-    const layer = ctx.layers.find((l) => l.config.id === config.id);
-    if (!layer)
-      continue;
-    if (config.ttlMs) {
-      const cached = ctx.cache.get(config.id);
-      if (cached && Date.now() - cached.updatedAt < config.ttlMs) {
-        results.push(sanitizeLayerContent(cached.content));
-        continue;
-      }
-    }
-    try {
-      const content = await layer.generate();
-      ctx.cache.set(config.id, content);
-      if (content.content.trim()) {
-        results.push(sanitizeLayerContent(content.content));
-      }
-    } catch (err) {
-      console.warn(`[four-cc] layer '${config.id}' failed:`, err);
-    }
-  }
-  return results;
-}
-
-// src/layers/core-prefix.ts
-class CorePrefixLayer {
-  config;
-  constructor() {
-    this.config = {
-      id: "core_prefix",
-      order: 1,
-      enabled: true
-    };
-  }
-  async generate() {
-    const now = Date.now();
-    const content = [
-      "GLOBAL RULES (stable \u2014 never changes per session)",
-      "",
-      "## Stop-Mode for Agents",
-      "- Max 15 Tool-Calls (mini: 8)",
-      "- Same tool >2\xD7 \u2192 STOP",
-      "- Same file >3\xD7 edit \u2192 STOP",
-      "- 5 calls without diff \u2192 STOP",
-      "- When spec unclear \u2192 SCOPE-PROPOSAL block, never improvise",
-      "",
-      "## Search Discipline",
-      "- Default = rag_search. grep/glob only as fallback.",
-      "- rag_search for multi-file discovery, symbol lookup, pattern search",
-      "- grep only when rag_search 0 results OR exact filename known",
-      "- Never rag_search + grep in parallel for same query",
-      "- read 3+ times in one turn \u2192 delegate to @reader",
-      "",
-      "## Quality Gates (for Reviewer)",
-      "Hard Gates: Tests green, Security clean, Lint/Types clean",
-      "Soft Score: \u226590% Auto-Merge, 70-89% User-Freigabe, <70% Nachbesserung",
-      "",
-      "## Minimal Output (HARD)",
-      "/complete: 2 lines max",
-      "Subagents: 3 lines max \u2014 file path(s) + line(s) + \u2705/\u274C",
-      "Architect summary after subagent: 1 sentence max",
-      "",
-      `Source: ~/.personal-config/ai-shared/AGENTS.md`
-    ].join(`
-`);
-    return {
-      content,
-      updatedAt: now,
-      source: "~/.personal-config/ai-shared/AGENTS.md"
-    };
-  }
-}
-
 // src/layers/repo-profile.ts
 import { readFile, stat } from "fs/promises";
 import { resolve } from "path";
@@ -143,7 +93,6 @@ class RepoProfileLayer {
     for (const filePath of files) {
       try {
         const content2 = await readFile(filePath, "utf-8");
-        const mtime = await stat(filePath).then((s) => s.mtimeMs.toString());
         const extracted = this.extractSections(content2);
         if (extracted) {
           sections.push(`## ${this.label(filePath)} (${filePath})`, extracted);
@@ -322,6 +271,33 @@ class IssueSliceLayer {
   }
 }
 
+// src/compaction/signal-injector.ts
+function createCompactionInstruction(_sessionID = "default") {
+  return `\u2500\u2500 COMPACTION: Active. Summarize completed work. \u2500\u2500`;
+}
+
+// src/compaction/signal-parser.ts
+function parseCompactionSignal(text) {
+  const adviceMatch = text.match(/compaction_advice:\s*(no_compact|compact_soon|compact_now)/i);
+  if (!adviceMatch)
+    return null;
+  if (adviceMatch.index !== undefined && adviceMatch.index < text.length - Math.max(300, Math.ceil(text.length * 0.2)))
+    return null;
+  const adviceRaw = adviceMatch[1].toLowerCase();
+  if (adviceRaw !== "no_compact" && adviceRaw !== "compact_soon" && adviceRaw !== "compact_now") {
+    return null;
+  }
+  const advice = adviceRaw;
+  const reasonMatch = text.match(/reason:\s*(.+)/i);
+  const reason = reasonMatch ? reasonMatch[1].trim() : "";
+  const safeMatch = text.match(/safe_to_compact:\s*(.+)/i);
+  const safeToCompact = safeMatch ? safeMatch[1].split(",").map((s) => s.trim()).filter(Boolean) : [];
+  return { advice, reason, safeToCompact };
+}
+function stripCompactionSignal(text) {
+  return text.replace(/\n*compaction_advice:.*[\s\S]*$/i, "").trimEnd();
+}
+
 // src/compaction/state.ts
 var sessionStates = new Map;
 function getSessionState(sessionID = "default") {
@@ -329,13 +305,14 @@ function getSessionState(sessionID = "default") {
   if (!s) {
     s = {
       lastSignal: null,
-      appliedFor: new Set,
       appliedForPruning: new Set,
       appliedForMessages: new Set,
       history: [],
       lastUserModel: { providerID: undefined, modelID: undefined },
       lastTokenEstimate: 0,
-      compactingActive: false
+      compactingActive: false,
+      turnsSinceCompaction: 0,
+      instructionSent: false
     };
     sessionStates.set(sessionID, s);
   }
@@ -362,9 +339,6 @@ function wasAppliedPruning(sessionID, block) {
 function markAppliedMessages(sessionID, block) {
   getSessionState(sessionID).appliedForMessages.add(block);
 }
-function wasAppliedMessages(sessionID, block) {
-  return getSessionState(sessionID).appliedForMessages.has(block);
-}
 function clearTransformState(sessionID = "default") {
   const s = getSessionState(sessionID);
   s.appliedForPruning.clear();
@@ -379,17 +353,11 @@ function setLastUserModel(sessionID, providerID, modelID) {
 function setLastTokenEstimate(sessionID, n) {
   getSessionState(sessionID).lastTokenEstimate = n;
 }
-function isCompacting(sessionID = "default") {
-  return getSessionState(sessionID).compactingActive;
-}
 var compactionCooldowns = new Map;
 function decrementCompactionCooldown(sessionID) {
   const current = compactionCooldowns.get(sessionID) ?? 0;
   if (current > 0)
     compactionCooldowns.set(sessionID, current - 1);
-}
-function isInCompactionCooldown(sessionID) {
-  return (compactionCooldowns.get(sessionID) ?? 0) > 0;
 }
 function getCompactionCooldownRemaining(sessionID) {
   return compactionCooldowns.get(sessionID) ?? 0;
@@ -397,57 +365,20 @@ function getCompactionCooldownRemaining(sessionID) {
 function setCompactionCooldown(sessionID, turns = 3) {
   compactionCooldowns.set(sessionID, turns);
 }
-
-// src/compaction/signal-injector.ts
-function createCompactionInstruction(sessionID = "default") {
-  const base = `\u2500\u2500 COMPACTION SIGNAL \u2500\u2500
-
-After completing a major work phase (issue done, research block finished, debug session closed), evaluate whether the session context would benefit from compaction. Output EXACTLY ONE of these signals at the end of your response:
-
-compaction_advice: no_compact
-reason: <one sentence why>
-
-compaction_advice: compact_soon
-reason: <one sentence why>
-
-compaction_advice: compact_now
-reason: <one sentence why>
-safe_to_compact: <comma-separated list of completed blocks>
-
-RULES:
-- compact_now: only when completed work blocks, repeated logs, or dead side-paths dominate the context AND the current task is complete
-- compact_soon: when context is growing but still manageable, compact after next task
-- no_compact: during active debugging, open investigations, or when critical state is fragile
-- NEVER signal compact_now during an open debug session
-- safe_to_compact: list only completed/stale blocks (e.g. "issue_5_research, tool_logs_turn_10-20")`;
-  if (isInCompactionCooldown(sessionID)) {
-    return base + `
-
-COMPACTION-COOLDOWN ACTIVE (${getCompactionCooldownRemaining(sessionID)} turns remaining): A compaction was just triggered. Output \`no_compact\` unless a substantial NEW work block completed in this turn.`;
-  }
-  return base;
+function incrementTurnsSinceCompaction(sessionID = "default") {
+  getSessionState(sessionID).turnsSinceCompaction++;
 }
-
-// src/compaction/signal-parser.ts
-function parseCompactionSignal(text) {
-  const adviceMatch = text.match(/compaction_advice:\s*(no_compact|compact_soon|compact_now)/i);
-  if (!adviceMatch)
-    return null;
-  if (adviceMatch.index !== undefined && adviceMatch.index < text.length - Math.max(300, Math.ceil(text.length * 0.2)))
-    return null;
-  const adviceRaw = adviceMatch[1].toLowerCase();
-  if (adviceRaw !== "no_compact" && adviceRaw !== "compact_soon" && adviceRaw !== "compact_now") {
-    return null;
-  }
-  const advice = adviceRaw;
-  const reasonMatch = text.match(/reason:\s*(.+)/i);
-  const reason = reasonMatch ? reasonMatch[1].trim() : "";
-  const safeMatch = text.match(/safe_to_compact:\s*(.+)/i);
-  const safeToCompact = safeMatch ? safeMatch[1].split(",").map((s) => s.trim()).filter(Boolean) : [];
-  return { advice, reason, safeToCompact };
+function resetTurnsSinceCompaction(sessionID = "default") {
+  getSessionState(sessionID).turnsSinceCompaction = 0;
 }
-function stripCompactionSignal(text) {
-  return text.replace(/\n*compaction_advice:.*[\s\S]*$/i, "").trimEnd();
+function getTurnsSinceCompaction(sessionID = "default") {
+  return getSessionState(sessionID).turnsSinceCompaction;
+}
+function isInstructionSent(sessionID = "default") {
+  return getSessionState(sessionID).instructionSent;
+}
+function markInstructionSent(sessionID = "default") {
+  getSessionState(sessionID).instructionSent = true;
 }
 
 // src/compaction/diary.ts
@@ -472,6 +403,17 @@ function writeDiaryEntry(entry) {
 `;
     appendFileSync(getDiaryPath(), line, "utf-8");
   } catch {}
+}
+
+// src/compaction/hash.ts
+function simpleHash(str) {
+  let hash = 0;
+  for (let i = 0;i < str.length; i++) {
+    const chr = str.charCodeAt(i);
+    hash = (hash << 5) - hash + chr;
+    hash |= 0;
+  }
+  return String(hash);
 }
 
 // src/compaction/pruning-engine.ts
@@ -541,18 +483,18 @@ function applyPruning(layerContents, config = {}) {
     blocksCondensed: 0,
     duplicatesRemoved: 0
   };
-  const triggered = isCompacting(cfg.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default");
-  if (!triggered) {
-    if (!signal || signal.advice === "no_compact" || signal.safeToCompact.length < cfg.minCompletedBlocks) {
-      stats.prunedLines = stats.originalLines;
-      return { contents: layerContents, stats };
-    }
+  if (signal?.advice === "no_compact") {
+    stats.prunedLines = stats.originalLines;
+    return { contents: layerContents, stats };
   }
-  if (signal) {
+  if (signal && signal.safeToCompact.length > 0) {
     const newBlocks = signal.safeToCompact.filter((b) => !wasAppliedPruning(sessionID, b));
-    if (newBlocks.length === 0 && !triggered) {
-      stats.prunedLines = stats.originalLines;
-      return { contents: layerContents, stats };
+    if (newBlocks.length === 0) {
+      const { contents: dedupedOnly, duplicatesRemoved: duplicatesRemoved2 } = deduplicateToolOutputs(layerContents.map((c) => truncateToolLogs(c, cfg.maxToolLogLines)));
+      stats.prunedLines = dedupedOnly.reduce((sum, c) => sum + c.split(`
+`).length, 0);
+      stats.duplicatesRemoved = duplicatesRemoved2;
+      return { contents: dedupedOnly, stats };
     }
   }
   const truncated = layerContents.map((c) => truncateToolLogs(c, cfg.maxToolLogLines));
@@ -589,18 +531,9 @@ function applyPruning(layerContents, config = {}) {
     linesAfter: stats.prunedLines,
     reductionPct,
     sessionId: process.env.OPENDOC_SESSION_ID || "unknown",
-    triggered: isCompacting(cfg.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default")
+    triggered: false
   });
   return { contents: condensed, stats };
-}
-function simpleHash(str) {
-  let hash = 0;
-  for (let i = 0;i < str.length; i++) {
-    const chr = str.charCodeAt(i);
-    hash = (hash << 5) - hash + chr;
-    hash |= 0;
-  }
-  return String(hash);
 }
 
 // src/debug-logger.ts
@@ -637,7 +570,6 @@ function logDebugEvent(type, payload) {
 var MAX_TOOL_LINES = 50;
 var HEADER_LINES = 10;
 var FOOTER_LINES = 10;
-var KEEP_RECENT = 15;
 function countChars(messages) {
   let total = 0;
   for (const msg of messages) {
@@ -681,7 +613,7 @@ function deduplicateMessageParts(messages) {
       continue;
     for (const part of msg.parts) {
       if (part.type === "text" && part.text && part.text.length > 20) {
-        const hash = simpleHash2(part.text);
+        const hash = simpleHash(part.text);
         if (seen.has(hash)) {
           const firstMsgIdx = seen.get(hash);
           part.text = `\u2191 see above (message ${firstMsgIdx + 1})`;
@@ -705,8 +637,7 @@ function compactMessageHistory(messages, sessionID) {
   const sid = sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default";
   const state = getCompactionState(sid);
   const signal = state.lastSignal;
-  const triggered = isCompacting(sid);
-  if (!triggered && (!signal || signal.advice === "no_compact")) {
+  if (signal?.advice === "no_compact") {
     return {
       messagesBefore: messages.length,
       messagesAfter: messages.length,
@@ -717,42 +648,15 @@ function compactMessageHistory(messages, sessionID) {
       sessionId: extractSessionId(messages)
     };
   }
-  const newBlocks = signal ? signal.safeToCompact.filter((b) => !wasAppliedMessages(sid, b)) : [];
-  const skipBlockMarking = signal && signal.safeToCompact.length > 0 && newBlocks.length === 0 && !triggered;
   const charsBefore = countChars(messages);
   const messagesBefore = messages.length;
   const sessionId = extractSessionId(messages);
-  let removed = 0;
-  if ((signal?.advice === "compact_now" || triggered) && messages.length > KEEP_RECENT) {
-    const toRemove = messages.length - KEEP_RECENT;
-    let removedCount = 0;
-    let idx = 0;
-    while (removedCount < toRemove && idx < messages.length) {
-      if (messages[idx].info.role !== "user") {
-        messages.splice(idx, 1);
-        removedCount++;
-      } else {
-        idx++;
-      }
-    }
-    removed = removedCount;
-    if (removedCount > 0) {
-      logDebugEvent("compaction.remove.applied", { removed: removedCount, messagesBefore, sessionId });
-    } else if (toRemove > 0) {
-      logDebugEvent("compaction.remove.stalled", {
-        reason: "all messages are user-role or non-removable",
-        toRemove,
-        messagesBefore,
-        sessionId
-      });
-    }
-  }
   const truncations = truncateMessageParts(messages);
   const duplicates = deduplicateMessageParts(messages);
   const charsAfter = countChars(messages);
   const messagesAfter = messages.length;
   const reductionPct = charsBefore > 0 ? Math.round((charsBefore - charsAfter) / charsBefore * 100) : 0;
-  if (signal && !skipBlockMarking) {
+  if (signal) {
     for (const block of signal.safeToCompact) {
       markAppliedMessages(sid, block);
     }
@@ -761,24 +665,24 @@ function compactMessageHistory(messages, sessionID) {
     ts: Date.now(),
     advice: signal?.advice ?? "triggered",
     reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
-    blocksCondensed: removed + truncations + duplicates
+    blocksCondensed: truncations + duplicates
   });
   writeDiaryEntry({
     ts: Date.now(),
     advice: signal?.advice ?? "triggered",
     reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
-    blocksCondensed: removed + truncations + duplicates,
+    blocksCondensed: truncations + duplicates,
     duplicatesRemoved: duplicates,
     linesBefore: charsBefore,
     linesAfter: charsAfter,
     reductionPct,
     sessionId,
-    triggered: isCompacting(sid)
+    triggered: false
   });
   logDebugEvent("compaction.applied", {
     messagesBefore,
     messagesAfter,
-    removed,
+    removed: 0,
     charsBefore,
     charsAfter,
     reductionPct,
@@ -788,25 +692,16 @@ function compactMessageHistory(messages, sessionID) {
     reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
     sessionId
   });
-  const didWork = removed > 0 || truncations > 0 || duplicates > 0;
+  const didWork = truncations > 0 || duplicates > 0;
   return {
     messagesBefore,
     messagesAfter,
     charsBefore,
     charsAfter,
     reductionPct,
-    applied: !skipBlockMarking || didWork,
+    applied: didWork,
     sessionId
   };
-}
-function simpleHash2(str) {
-  let hash = 0;
-  for (let i = 0;i < str.length; i++) {
-    const chr = str.charCodeAt(i);
-    hash = (hash << 5) - hash + chr;
-    hash |= 0;
-  }
-  return String(hash);
 }
 
 // src/compaction/tokens.ts
@@ -833,19 +728,6 @@ function estimateMessageTokens(message) {
 }
 
 // src/four-opencode-context-curator.ts
-function detectUserCompactionTrigger(text) {
-  const lower = text.toLowerCase().trim();
-  if (lower.startsWith("/compact")) {
-    return { shouldCompact: true, mode: "compact_now" };
-  }
-  if (/^(compact now|force compact)/i.test(lower)) {
-    return { shouldCompact: true, mode: "compact_now" };
-  }
-  if (lower.startsWith("compact soon")) {
-    return { shouldCompact: true, mode: "compact_soon" };
-  }
-  return { shouldCompact: false, mode: "no_compact" };
-}
 var FourContextCuratorPlugin = async (ctx) => {
   try {
     const fs2 = await import("fs");
@@ -863,7 +745,6 @@ var FourContextCuratorPlugin = async (ctx) => {
     logDebugEvent("compaction.plugin.loaded", { version, pid, ccDebug });
   } catch {}
   const layers = [
-    new CorePrefixLayer,
     new RepoProfileLayer,
     new TaskSliceLayer,
     new IssueSliceLayer
@@ -909,15 +790,15 @@ var FourContextCuratorPlugin = async (ctx) => {
       if (layerContents.length > 0) {
         const sanitized = layerContents.map(sanitizeLayerContent);
         const pruned = applyPruning(sanitized, { sessionID });
-        const prefix = [
-          "\u2500\u2500 CONTEXT CURATOR (Layered Cacheable Prefixes) \u2500\u2500",
-          ...pruned.contents
-        ].join(`
+        const prefix = pruned.contents.join(`
 
 `);
         output.system.push(prefix);
       }
-      output.system.push(createCompactionInstruction(sessionID));
+      if (!isInstructionSent(sessionID)) {
+        output.system.push(createCompactionInstruction(sessionID));
+        markInstructionSent(sessionID);
+      }
     },
     "experimental.session.compacting": async (input, output) => {
       const sessionID = input?.sessionID ?? "default";
@@ -929,24 +810,12 @@ var FourContextCuratorPlugin = async (ctx) => {
         });
         if (signal?.advice === "no_compact")
           return;
-        if (signal && signal.safeToCompact.length > 0) {
-          output.context.push(`Compaction advice: ${signal.advice} \u2014 ${signal.reason}`, `Safe to compact: ${signal.safeToCompact.join(", ")}`);
-        }
         const lines = [
-          "You are compacting an AI coding assistant session.",
-          "PRIORITY ORDER (preserve first, condense later):",
-          "1. Active task context and current issue details \u2014 KEEP INTACT",
-          "2. User instructions and architectural decisions \u2014 KEEP INTACT",
-          "3. Recent tool outputs (last 5 turns) \u2014 KEEP",
-          "4. Completed issue resolutions \u2014 CONDENSE to 1-line summary",
-          "5. Duplicate tool outputs \u2014 REMOVE, reference first occurrence",
-          "6. Tool logs >50 lines \u2014 TRUNCATE to header+footer"
+          "Compacting session. Preserve: active task, user instructions, recent 5 turns.",
+          "Condense: completed issues. Truncate: >50-line tool logs."
         ];
         if (signal) {
-          lines.push(`Signal: ${signal.advice} \u2014 ${signal.reason}`);
-        }
-        if (signal?.safeToCompact.length) {
-          lines.push(`Completed blocks: ${signal.safeToCompact.join(", ")}`);
+          lines.push(`Signal: ${signal.advice}`);
         }
         output.prompt = lines.join(`
 `);
@@ -1007,53 +876,25 @@ var FourContextCuratorPlugin = async (ctx) => {
               logDebugEvent("compaction.signal.parsed", { advice: signal.advice, reason: signal.reason, sessionID });
               const signalMsg = msgs.find((m2) => m2.info?.sessionID);
               const realSessionID = signalMsg?.info?.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "unknown";
-              const inCooldown = getCompactionState(sessionID).compactingActive || getCompactionCooldownRemaining(sessionID) > 0;
-              if (signal.advice === "compact_now" && !inCooldown) {
+              const inCooldown2 = getCompactionState(sessionID).compactingActive || getCompactionCooldownRemaining(sessionID) > 0;
+              if (signal.advice === "compact_now" && !inCooldown2) {
                 await triggerNativeCompaction(realSessionID);
-              } else if (signal.advice === "compact_now" && inCooldown) {
+                clearSignal(sessionID);
+              } else if (signal.advice === "compact_now" && inCooldown2) {
                 logDebugEvent("compaction.summarize.cooldown_skipped", {
                   sessionID: realSessionID,
                   cooldownRemaining: getCompactionCooldownRemaining(sessionID),
                   compactingActive: getCompactionState(sessionID).compactingActive
                 });
+                clearSignal(sessionID);
               }
               break;
             }
           }
           break;
         }
-        const finalUserMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
-        if (finalUserMsg?.info?.role === "user" && Array.isArray(finalUserMsg.parts)) {
-          for (const part of finalUserMsg.parts) {
-            if (part.type !== "text" || !part.text)
-              continue;
-            const result = detectUserCompactionTrigger(part.text);
-            if (result.shouldCompact) {
-              const userModel = getCompactionState(sessionID).lastUserModel;
-              const userSignal = {
-                advice: result.mode === "compact_now" ? "compact_now" : "compact_soon",
-                reason: `User-requested ${result.mode}`,
-                safeToCompact: ["user_requested"]
-              };
-              setLastSignal(sessionID, userSignal);
-              logDebugEvent("compaction.user_triggered", { advice: result.mode, sessionID });
-              const signalMsg = msgs.find((m) => m.info?.sessionID);
-              const realSessionID = signalMsg?.info?.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "unknown";
-              const inCooldown = getCompactionState(sessionID).compactingActive || getCompactionCooldownRemaining(sessionID) > 0;
-              if (result.mode === "compact_now" && !inCooldown) {
-                await triggerNativeCompaction(realSessionID);
-              } else if (result.mode === "compact_now" && inCooldown) {
-                logDebugEvent("compaction.summarize.user_cooldown_skipped", {
-                  sessionID: realSessionID,
-                  cooldownRemaining: getCompactionCooldownRemaining(sessionID),
-                  compactingActive: getCompactionState(sessionID).compactingActive
-                });
-              }
-              break;
-            }
-          }
-        }
         decrementCompactionCooldown(sessionID);
+        incrementTurnsSinceCompaction(sessionID);
         compactMessageHistory(output.messages, sessionID);
         let totalTokens = 0;
         for (const m of output.messages) {
@@ -1061,6 +902,17 @@ var FourContextCuratorPlugin = async (ctx) => {
         }
         setLastTokenEstimate(sessionID, totalTokens);
         logDebugEvent("compaction.tokens.estimated", { totalTokens, messageCount: output.messages.length });
+        const AUTO_TOKEN_THRESHOLD = 50000;
+        const AUTO_TURN_THRESHOLD = 3;
+        const turnsSince = getTurnsSinceCompaction(sessionID);
+        const inCooldown = getCompactionState(sessionID).compactingActive || getCompactionCooldownRemaining(sessionID) > 0;
+        if (totalTokens > AUTO_TOKEN_THRESHOLD && turnsSince >= AUTO_TURN_THRESHOLD && !inCooldown) {
+          const signalMsg2 = msgs.find((m) => m.info?.sessionID);
+          const realSid2 = signalMsg2?.info?.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "unknown";
+          logDebugEvent("compaction.auto_trigger", { totalTokens, turnsSince, sessionID: realSid2 });
+          await triggerNativeCompaction(realSid2);
+          resetTurnsSinceCompaction(sessionID);
+        }
         for (let msgIdx = 0;msgIdx < output.messages.length; msgIdx++) {
           const m = output.messages[msgIdx];
           if (!Array.isArray(m.parts))
@@ -1088,7 +940,6 @@ var FourContextCuratorPlugin = async (ctx) => {
 };
 var four_opencode_context_curator_default = FourContextCuratorPlugin;
 export {
-  detectUserCompactionTrigger,
   four_opencode_context_curator_default as default,
   FourContextCuratorPlugin
 };

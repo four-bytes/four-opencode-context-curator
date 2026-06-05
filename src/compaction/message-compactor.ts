@@ -1,6 +1,7 @@
-import { getCompactionState, markAppliedMessages, wasAppliedMessages, addEvent, isCompacting } from "./state.js";
+import { getCompactionState, markAppliedMessages, addEvent } from "./state.js";
 import { writeDiaryEntry } from "./diary.js";
 import { logDebugEvent } from "../debug-logger.js";
+import { simpleHash } from "./hash.js";
 
 export interface Part {
   type: string;
@@ -25,7 +26,6 @@ export interface CompactionResult {
 const MAX_TOOL_LINES = 50;
 const HEADER_LINES = 10;
 const FOOTER_LINES = 10;
-const KEEP_RECENT = 15;
 
 function countChars(messages: MessageItem[]): number {
   let total = 0;
@@ -93,18 +93,19 @@ function extractSessionId(messages: MessageItem[]): string {
 }
 
 /**
- * Main entry point: aggressive message history compaction.
- * On compact_now: keeps only last KEEP_RECENT messages + truncates + deduplicates.
- * On compact_soon: truncates + deduplicates only, no message removal.
+ * Main entry point: always applies truncation + dedup hygiene.
+ * Message removal is handled by native session.summarize(), not here.
+ * Only skips when no_compact signal is active.
  */
 export function compactMessageHistory(messages: MessageItem[], sessionID?: string): CompactionResult {
   const sid = sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default";
   const state = getCompactionState(sid);
   const signal = state.lastSignal;
 
-  const triggered = isCompacting(sid);
-
-  if (!triggered && (!signal || signal.advice === "no_compact")) {
+  // Always apply truncation + dedup hygiene (no signal gate anymore).
+  // Message removal is handled by native session.summarize(), not here.
+  // Only skip if no_compact signal explicitly says so.
+  if (signal?.advice === "no_compact") {
     return {
       messagesBefore: messages.length,
       messagesAfter: messages.length,
@@ -116,52 +117,14 @@ export function compactMessageHistory(messages: MessageItem[], sessionID?: strin
     };
   }
 
-  // In trigger-only mode (no signal), still apply generic pruning
-  // but skip block-based condensing
-  const newBlocks = signal ? signal.safeToCompact.filter((b) => !wasAppliedMessages(sid, b)) : [];
-  const skipBlockMarking = signal && signal.safeToCompact.length > 0 && newBlocks.length === 0 && !triggered;
-
   const charsBefore = countChars(messages);
   const messagesBefore = messages.length;
   const sessionId = extractSessionId(messages);
 
-  // Step 1: Drop old messages on compact_now or trigger-only (keep only last KEEP_RECENT)
-  // BUT never drop user messages — they contain task prompts/instructions
-  let removed = 0;
-  if ((signal?.advice === "compact_now" || triggered) && messages.length > KEEP_RECENT) {
-    const toRemove = messages.length - KEEP_RECENT;
-    // Remove oldest non-user messages first
-    let removedCount = 0;
-    let idx = 0;
-    while (removedCount < toRemove && idx < messages.length) {
-      if (messages[idx].info.role !== "user") {
-        messages.splice(idx, 1);
-        removedCount++;
-        // Don't increment idx — splice shifts elements
-      } else {
-        idx++;
-      }
-    }
-    removed = removedCount;
-
-    // Warn when removal was expected but no messages could be removed
-    // (e.g. all messages are user-role — they contain task instructions and are preserved)
-    if (removedCount > 0) {
-      logDebugEvent("compaction.remove.applied", { removed: removedCount, messagesBefore, sessionId });
-    } else if (toRemove > 0) {
-      logDebugEvent("compaction.remove.stalled", {
-        reason: "all messages are user-role or non-removable",
-        toRemove,
-        messagesBefore,
-        sessionId,
-      });
-    }
-  }
-
-  // Step 2: Truncate long tool outputs
+  // Step 1: Truncate long tool outputs
   const truncations = truncateMessageParts(messages);
 
-  // Step 3: Deduplicate repeated outputs
+  // Step 2: Deduplicate repeated outputs
   const duplicates = deduplicateMessageParts(messages);
 
   const charsAfter = countChars(messages);
@@ -171,8 +134,8 @@ export function compactMessageHistory(messages: MessageItem[], sessionID?: strin
       ? Math.round(((charsBefore - charsAfter) / charsBefore) * 100)
       : 0;
 
-  // Mark blocks as applied (skip if all blocks already applied, or in trigger-only mode)
-  if (signal && !skipBlockMarking) {
+  // Mark blocks as applied
+  if (signal) {
     for (const block of signal.safeToCompact) {
       markAppliedMessages(sid, block);
     }
@@ -183,7 +146,7 @@ export function compactMessageHistory(messages: MessageItem[], sessionID?: strin
     ts: Date.now(),
     advice: signal?.advice ?? "triggered",
     reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
-    blocksCondensed: removed + truncations + duplicates,
+    blocksCondensed: truncations + duplicates,
   });
 
   // Write diary
@@ -191,19 +154,19 @@ export function compactMessageHistory(messages: MessageItem[], sessionID?: strin
     ts: Date.now(),
     advice: signal?.advice ?? "triggered",
     reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
-    blocksCondensed: removed + truncations + duplicates,
+    blocksCondensed: truncations + duplicates,
     duplicatesRemoved: duplicates,
     linesBefore: charsBefore,
     linesAfter: charsAfter,
     reductionPct,
     sessionId,
-    triggered: isCompacting(sid),
+    triggered: false,
   });
 
   logDebugEvent("compaction.applied", {
     messagesBefore,
     messagesAfter,
-    removed,
+    removed: 0,
     charsBefore,
     charsAfter,
     reductionPct,
@@ -214,7 +177,7 @@ export function compactMessageHistory(messages: MessageItem[], sessionID?: strin
     sessionId,
   });
 
-  const didWork = removed > 0 || truncations > 0 || duplicates > 0;
+  const didWork = truncations > 0 || duplicates > 0;
 
   return {
     messagesBefore,
@@ -222,17 +185,9 @@ export function compactMessageHistory(messages: MessageItem[], sessionID?: strin
     charsBefore,
     charsAfter,
     reductionPct,
-    applied: !skipBlockMarking || didWork,
+    applied: didWork,
     sessionId,
   };
 }
 
-function simpleHash(str: string): string {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const chr = str.charCodeAt(i);
-    hash = (hash << 5) - hash + chr;
-    hash |= 0;
-  }
-  return String(hash);
-}
+

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "bun:test";
 import { applyPruning } from "../src/compaction/pruning-engine.js";
-import { setLastSignal, clearSignal, getCompactionState, setCompacting } from "../src/compaction/state.js";
+import { setLastSignal, clearSignal, setCompacting } from "../src/compaction/state.js";
 import { writeDiaryEntry } from "../src/compaction/diary.js";
 import { compactMessageHistory } from "../src/compaction/message-compactor.js";
 import { parseCompactionSignal, type CompactionSignal } from "../src/compaction/signal-parser.js";
@@ -32,7 +32,6 @@ describe("Compaction Integration", () => {
   afterEach(() => {
     clearSignal("test");
     clearSignal("session-integration");
-    getCompactionState("test").appliedFor.clear();
     setCompacting("test", false);
     process.env.OPENDOC_SESSION_ID = "test";
   });
@@ -130,18 +129,23 @@ describe("Compaction Integration", () => {
     expect(content).toContain("integration test complete");
   });
 
-  it("no diary entry when pruning is no-op", () => {
-    // No signal set → no-op
+  it("no diary entry when no_compact signal", () => {
+    // no_compact signal → pruning skipped entirely
+    setLastSignal("test", {
+      advice: "no_compact",
+      reason: "debugging in progress",
+      safeToCompact: [],
+    });
     const input = ["just some content"];
 
     try { unlinkSync(diaryPath); } catch {}
 
     applyPruning(input, { sessionID: "test" });
 
-    // Diary should NOT be created (or be empty) for no-op
+    // Diary should NOT be created for no_compact
     if (existsSync(diaryPath)) {
       const content = readFileSync(diaryPath, "utf-8");
-      expect(content.trim()).toBe(""); // should be empty since no write happened
+      expect(content.trim()).toBe("");
     }
   });
 

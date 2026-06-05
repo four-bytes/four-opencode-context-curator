@@ -14,13 +14,14 @@ export interface LastUserModel {
 
 export interface CompactionState {
   lastSignal: CompactionSignal | null;
-  appliedFor: Set<string>;
   appliedForPruning: Set<string>;
   appliedForMessages: Set<string>;
   history: CompactionEvent[];
   lastUserModel: LastUserModel;
   lastTokenEstimate: number;
   compactingActive: boolean;
+  turnsSinceCompaction: number;
+  instructionSent: boolean;
 }
 
 const sessionStates = new Map<string, CompactionState>();
@@ -30,26 +31,18 @@ function getSessionState(sessionID: string = "default"): CompactionState {
   if (!s) {
     s = {
       lastSignal: null,
-      appliedFor: new Set(),
       appliedForPruning: new Set(),
       appliedForMessages: new Set(),
       history: [],
       lastUserModel: { providerID: undefined, modelID: undefined },
       lastTokenEstimate: 0,
       compactingActive: false,
+      turnsSinceCompaction: 0,
+      instructionSent: false,
     };
     sessionStates.set(sessionID, s);
   }
   return s;
-}
-
-export function getSessionIDs(): string[] {
-  return Array.from(sessionStates.keys());
-}
-
-export function removeSession(sessionID: string): void {
-  sessionStates.delete(sessionID);
-  compactionCooldowns.delete(sessionID);
 }
 
 export function getCompactionState(sessionID: string = "default"): CompactionState {
@@ -67,14 +60,6 @@ export function clearSignal(sessionID: string = "default"): void {
   s.appliedForMessages.clear();
 }
 
-export function markApplied(sessionID: string, block: string): void {
-  getSessionState(sessionID).appliedFor.add(block);
-}
-
-export function wasApplied(sessionID: string, block: string): boolean {
-  return getSessionState(sessionID).appliedFor.has(block);
-}
-
 export function markAppliedPruning(sessionID: string, block: string): void {
   getSessionState(sessionID).appliedForPruning.add(block);
 }
@@ -85,10 +70,6 @@ export function wasAppliedPruning(sessionID: string, block: string): boolean {
 
 export function markAppliedMessages(sessionID: string, block: string): void {
   getSessionState(sessionID).appliedForMessages.add(block);
-}
-
-export function wasAppliedMessages(sessionID: string, block: string): boolean {
-  return getSessionState(sessionID).appliedForMessages.has(block);
 }
 
 export function clearTransformState(sessionID: string = "default"): void {
@@ -110,16 +91,8 @@ export function setLastTokenEstimate(sessionID: string, n: number): void {
   getSessionState(sessionID).lastTokenEstimate = n;
 }
 
-export function getLastTokenEstimate(sessionID: string = "default"): number {
-  return getSessionState(sessionID).lastTokenEstimate;
-}
-
 export function setCompacting(sessionID: string, active: boolean): void {
   getSessionState(sessionID).compactingActive = active;
-}
-
-export function isCompacting(sessionID: string = "default"): boolean {
-  return getSessionState(sessionID).compactingActive;
 }
 
 const compactionCooldowns = new Map<string, number>();
@@ -130,10 +103,6 @@ export function decrementCompactionCooldown(sessionID: string): void {
   if (current > 0) compactionCooldowns.set(sessionID, current - 1);
 }
 
-export function isInCompactionCooldown(sessionID: string): boolean {
-  return (compactionCooldowns.get(sessionID) ?? 0) > 0;
-}
-
 export function getCompactionCooldownRemaining(sessionID: string): number {
   return compactionCooldowns.get(sessionID) ?? 0;
 }
@@ -141,3 +110,25 @@ export function getCompactionCooldownRemaining(sessionID: string): number {
 export function setCompactionCooldown(sessionID: string, turns: number = 3): void {
   compactionCooldowns.set(sessionID, turns);
 }
+
+export function incrementTurnsSinceCompaction(sessionID: string = "default"): void {
+  getSessionState(sessionID).turnsSinceCompaction++;
+}
+
+export function resetTurnsSinceCompaction(sessionID: string = "default"): void {
+  getSessionState(sessionID).turnsSinceCompaction = 0;
+}
+
+export function getTurnsSinceCompaction(sessionID: string = "default"): number {
+  return getSessionState(sessionID).turnsSinceCompaction;
+}
+
+export function isInstructionSent(sessionID: string = "default"): boolean {
+  return getSessionState(sessionID).instructionSent;
+}
+
+export function markInstructionSent(sessionID: string = "default"): void {
+  getSessionState(sessionID).instructionSent = true;
+}
+
+
