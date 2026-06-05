@@ -6,7 +6,6 @@ import {
 } from "../src/compaction/message-compactor.js";
 import type { MessageItem, Part } from "../src/compaction/message-compactor.js";
 import { setLastSignal, clearSignal, getCompactionState } from "../src/compaction/state.js";
-import type { CompactionSignal } from "../src/compaction/signal-parser.js";
 
 function makeTextPart(text: string): Part {
   return { type: "text", text };
@@ -77,14 +76,15 @@ describe("deduplicateMessageParts", () => {
 describe("compactMessageHistory", () => {
   afterEach(() => {
     clearSignal("test");
-    getCompactionState("test").appliedFor.clear();
   });
 
-  it("no-op when no signal", () => {
-    const messages: MessageItem[] = [makeMsg([makeTextPart("hello")])];
+  it("applies truncation/dedup even without signal (always-on hygiene)", () => {
+    const longText = Array.from({ length: 80 }, (_, i) => `log${i + 1}`).join("\n");
+    const messages: MessageItem[] = [makeMsg([makeTextPart(longText)])];
     const result = compactMessageHistory(messages, "test");
-    expect(result.applied).toBe(false);
-    expect(result.charsBefore).toBe(result.charsAfter);
+    // Always-on truncation applies
+    expect(result.charsAfter).toBeLessThan(result.charsBefore);
+    expect(result.applied).toBe(true);
   });
 
   it("no-op when no_compact signal", () => {
@@ -98,7 +98,7 @@ describe("compactMessageHistory", () => {
     expect(result.applied).toBe(false);
   });
 
-  it("applies compaction with compact_now signal and long messages", () => {
+  it("applies truncation/dedup with compact_now signal (no message removal)", () => {
     setLastSignal("test", {
       advice: "compact_now",
       reason: "session cleanup",
@@ -112,123 +112,54 @@ describe("compactMessageHistory", () => {
     const result = compactMessageHistory(messages, "test");
     expect(result.applied).toBe(true);
     expect(result.charsAfter).toBeLessThan(result.charsBefore);
-    expect(result.reductionPct).toBeGreaterThan(0);
+    expect(messages.length).toBe(2); // No message removal
   });
 
-  it("does not re-apply for already applied blocks", () => {
-    const signal: CompactionSignal = {
-      advice: "compact_now",
-      reason: "done",
-      safeToCompact: ["block1"],
-    };
-    setLastSignal("test", signal);
-    const messages: MessageItem[] = [makeMsg([makeTextPart("content")])];
+  it("two calls both apply always-on hygiene", () => {
+    // First call with short messages — no truncation/dedup work
+    const shortMsgs: MessageItem[] = [makeMsg([makeTextPart("hello")])];
+    setLastSignal("test", { advice: "compact_now", reason: "r1", safeToCompact: ["b1"] });
+    const first = compactMessageHistory(shortMsgs, "test");
+    expect(first.applied).toBe(false); // no work to do
 
-    const first = compactMessageHistory(messages, "test");
-    expect(first.applied).toBe(true);
-
-    setLastSignal("test", signal);
-    const second = compactMessageHistory(messages, "test");
-    expect(second.applied).toBe(false);
+    // Second call with long messages — truncation applies
+    const longText = Array.from({ length: 80 }, (_, i) => `line${i + 1}`).join("\n");
+    const longMsgs: MessageItem[] = [makeMsg([makeTextPart(longText)])];
+    setLastSignal("test", { advice: "compact_now", reason: "r2", safeToCompact: ["b2"] });
+    const second = compactMessageHistory(longMsgs, "test");
+    expect(second.applied).toBe(true);
+    expect(second.charsAfter).toBeLessThan(second.charsBefore);
   });
 
-  it("drops old messages on compact_now (aggressive)", () => {
-    setLastSignal("test", {
-      advice: "compact_now",
-      reason: "session too large",
-      safeToCompact: ["block_trim"],
-    });
-    // 25 messages — should keep only 15
-    const messages: MessageItem[] = Array.from({ length: 25 }, (_, i) =>
-      makeMsg([makeTextPart(`message ${i + 1}`)]),
-    );
-    const result = compactMessageHistory(messages, "test");
-    expect(result.applied).toBe(true);
-    expect(messages.length).toBe(15); // 25 - 10 dropped
-    expect(result.messagesBefore).toBe(25);
-    expect(result.messagesAfter).toBe(15);
-    expect(result.reductionPct).toBeGreaterThan(0);
-  });
-
-  it("does not drop messages on compact_soon", () => {
+  it("compact_soon applies truncation/dedup but no message removal", () => {
     setLastSignal("test", {
       advice: "compact_soon",
       reason: "growing but ok",
       safeToCompact: ["block1"],
     });
+    const longText = Array.from({ length: 80 }, (_, i) => `logline${i + 1}`).join("\n");
     const messages: MessageItem[] = Array.from({ length: 20 }, (_, i) =>
-      makeMsg([makeTextPart(`msg ${i}`)]),
+      makeMsg([makeTextPart(longText)]),
     );
     const result = compactMessageHistory(messages, "test");
     expect(result.applied).toBe(true);
-    expect(messages.length).toBe(20); // No dropping on compact_soon
+    expect(messages.length).toBe(20); // No dropping
+    expect(result.charsAfter).toBeLessThan(result.charsBefore);
   });
 
-  it("compact_now with empty safe_to_compact still drops to KEEP_RECENT", () => {
-    setLastSignal("test", {
-      advice: "compact_now",
-      reason: "test",
-      safeToCompact: [],
-    });
-    const messages: MessageItem[] = Array.from({ length: 25 }, (_, i) =>
-      makeMsg([makeTextPart(`message ${i + 1}`)]),
-    );
-    const result = compactMessageHistory(messages, "test");
-    expect(result.applied).toBe(true);
-    expect(messages.length).toBe(15);
-  });
-
-  it("compact_soon with empty safe_to_compact truncates but does not drop", () => {
+  it("compact_soon applies truncation/dedup", () => {
+    const longText = Array.from({ length: 80 }, (_, i) => `line${i + 1}`).join("\n");
     setLastSignal("test", {
       advice: "compact_soon",
       reason: "test",
       safeToCompact: [],
     });
-    const messages: MessageItem[] = Array.from({ length: 20 }, (_, i) =>
-      makeMsg([makeTextPart(`msg ${i}`)]),
+    const messages: MessageItem[] = Array.from({ length: 5 }, (_, i) =>
+      makeMsg([makeTextPart(longText)]),
     );
     const result = compactMessageHistory(messages, "test");
     expect(result.applied).toBe(true);
-    expect(messages.length).toBe(20);
-  });
-
-  // reproducer for GH-82: compact_now with only user messages → removed=0
-  describe("removed:0 edge case (GH-82)", () => {
-    it("logs stall when all messages are user-role on compact_now", () => {
-      const msgs: MessageItem[] = [];
-      for (let i = 0; i < 20; i++) {
-        msgs.push({ info: { role: "user" }, parts: [{ type: "text", text: `task prompt ${i}` }] });
-      }
-      clearSignal("gh82");
-      setLastSignal("gh82", { advice: "compact_now", reason: "test", safeToCompact: ["block1"] });
-      const result = compactMessageHistory(msgs, "gh82");
-      // All messages are user-role → nothing removed, but should not crash or hang
-      expect(result.messagesAfter).toBe(20); // user messages preserved
-      expect(result.applied).toBe(true);
-      expect(result.reductionPct).toBe(0); // no change since all user-role
-    });
-
-    it("removes non-user messages on compact_now with mixed roles", () => {
-      const msgs: MessageItem[] = [];
-      // 5 user messages
-      for (let i = 0; i < 5; i++) {
-        msgs.push({ info: { role: "user" }, parts: [{ type: "text", text: `task ${i}` }] });
-      }
-      // 15 assistant messages (old)
-      for (let i = 0; i < 15; i++) {
-        msgs.push({ info: { role: "assistant" }, parts: [{ type: "text", text: `response ${i}` }] });
-      }
-      // 5 more user messages (recent)
-      for (let i = 5; i < 10; i++) {
-        msgs.push({ info: { role: "user" }, parts: [{ type: "text", text: `task ${i}` }] });
-      }
-      clearSignal("gh82-mixed");
-      setLastSignal("gh82-mixed", { advice: "compact_now", reason: "mixed", safeToCompact: ["b1"] });
-      const result = compactMessageHistory(msgs, "gh82-mixed");
-      // KEEP_RECENT=15, oldest non-user (assistant) messages removed first
-      expect(result.messagesAfter).toBeGreaterThanOrEqual(15);
-      expect(result.messagesAfter).toBeLessThan(25);
-      expect(result.applied).toBe(true);
-    });
+    expect(result.charsAfter).toBeLessThan(result.charsBefore);
+    expect(messages.length).toBe(5); // No message removal
   });
 });

@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { createHookContext, runLayerPipeline } from "../src/hook.js";
 import { DEFAULT_LAYERS } from "../src/layers.js";
-import { CorePrefixLayer } from "../src/layers/core-prefix.js";
 import { RepoProfileLayer } from "../src/layers/repo-profile.js";
 import { TaskSliceLayer } from "../src/layers/task-slice.js";
 import { IssueSliceLayer } from "../src/layers/issue-slice.js";
@@ -47,15 +46,6 @@ describe("Prefix Token Reduction", () => {
     try { rmSync(testDir, { recursive: true }); } catch { /* ok */ }
   });
 
-  it("core_prefix produces stable content", async () => {
-    const layer = new CorePrefixLayer();
-    const result = await layer.generate();
-    expect(result.content).toContain("GLOBAL RULES");
-    expect(result.content).toContain("Stop-Mode");
-    expect(result.content).toContain("Search Discipline");
-    expect(result.content.length).toBeGreaterThan(200);
-  });
-
   it("repo_profile extracts relevant sections only", async () => {
     const layer = new RepoProfileLayer();
     const result = await layer.generate();
@@ -90,7 +80,6 @@ describe("Prefix Token Reduction", () => {
 
   it("≥50% Token-Reduktion vs Full-File Context", async () => {
     const layers = [
-      new CorePrefixLayer(),
       new RepoProfileLayer(),
       new TaskSliceLayer(),
       new IssueSliceLayer(),
@@ -104,9 +93,8 @@ describe("Prefix Token Reduction", () => {
     const curatorChars = curatorOutput.length;
 
     // Baseline: full AGENTS.md content (simulating no curator, everything in prompt)
-    const staticRules = (await new CorePrefixLayer().generate()).content;
     const taskContent = `CURRENT TASK\n${process.env.OPENDOC_TASK || ""}`;
-    const baselineOutput = [staticRules, sampleAgentsContent, taskContent].join("\n");
+    const baselineOutput = [sampleAgentsContent, taskContent].join("\n");
     const baselineChars = baselineOutput.length;
 
     const reduction = ((baselineChars - curatorChars) / baselineChars) * 100;
@@ -126,7 +114,6 @@ describe("Prefix Token Reduction", () => {
 
   it("layer pipeline runs without errors", async () => {
     const layers = [
-      new CorePrefixLayer(),
       new RepoProfileLayer(),
       new TaskSliceLayer(),
       new IssueSliceLayer(),
@@ -135,8 +122,8 @@ describe("Prefix Token Reduction", () => {
     const ctx = createHookContext([...DEFAULT_LAYERS], layers);
     const contents = await runLayerPipeline(ctx);
 
-    // All 4 layers should produce output (issue may be empty without gh CLI)
-    expect(contents.length).toBeGreaterThanOrEqual(3); // at least core + repo + task
+    // All 3 layers should produce output (issue may be empty without gh CLI)
+    expect(contents.length).toBeGreaterThanOrEqual(2); // at least repo + task
     contents.forEach(c => {
       expect(typeof c).toBe("string");
     });

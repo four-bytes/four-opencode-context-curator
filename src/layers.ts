@@ -1,5 +1,5 @@
 export interface LayerConfig {
-  /** Layer-ID (core_prefix, repo_profile, task_slice, issue_slice) */
+  /** Layer-ID (repo_profile, task_slice, issue_slice) */
   id: string;
   /** Determines position in system prompt (lower = earlier = better cache) */
   order: number;
@@ -25,7 +25,6 @@ export interface Layer {
 }
 
 export const DEFAULT_LAYERS: LayerConfig[] = [
-  { id: "core_prefix", order: 1, enabled: true },
   { id: "repo_profile", order: 2, enabled: true },
   { id: "task_slice", order: 3, enabled: true, ttlMs: 30 * 60 * 1000 },
   { id: "issue_slice", order: 4, enabled: true },

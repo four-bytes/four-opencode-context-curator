@@ -3,9 +3,9 @@ import {
   markAppliedPruning,
   wasAppliedPruning,
   addEvent,
-  isCompacting,
 } from "./state.js";
 import { writeDiaryEntry } from "./diary.js";
+import { simpleHash } from "./hash.js";
 
 export interface PruningConfig {
   /** Max lines before truncation kicks in */
@@ -112,7 +112,7 @@ export function condenseIssueSlice(
  * Main pruning entry point.
  * Applies all three heuristics: truncate, dedupe, condense.
  * Returns modified contents + stats.
- * No-op if no signal, no_compact, or no new blocks.
+ * Always applies truncation + dedup hygiene. Only skips when no_compact signal.
  */
 export function applyPruning(
   layerContents: string[],
@@ -133,22 +133,22 @@ export function applyPruning(
     duplicatesRemoved: 0,
   };
 
-  // Guard: no signal, no_compact, or not enough blocks → no-op
-  // UNLESS CC_COMPACTION_TRIGGER is set → apply generic heuristics
-  const triggered = isCompacting(cfg.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default");
-  if (!triggered) {
-    if (!signal || signal.advice === "no_compact" || signal.safeToCompact.length < cfg.minCompletedBlocks) {
-      stats.prunedLines = stats.originalLines;
-      return { contents: layerContents, stats };
-    }
+  // Always apply truncation + dedup hygiene.
+  // Only skip condense when no_compact or no blocks.
+  if (signal?.advice === "no_compact") {
+    stats.prunedLines = stats.originalLines;
+    return { contents: layerContents, stats };
   }
 
-  // Guard: already applied for all requested blocks (skip if trigger-only, no signal)
-  if (signal) {
+  // Skip condense if all blocks already applied
+  if (signal && signal.safeToCompact.length > 0) {
     const newBlocks = signal.safeToCompact.filter((b) => !wasAppliedPruning(sessionID, b));
-    if (newBlocks.length === 0 && !triggered) {
-      stats.prunedLines = stats.originalLines;
-      return { contents: layerContents, stats };
+    if (newBlocks.length === 0) {
+      // Still apply truncation + dedup, just skip condense
+      const { contents: dedupedOnly, duplicatesRemoved } = deduplicateToolOutputs(layerContents.map(c => truncateToolLogs(c, cfg.maxToolLogLines)));
+      stats.prunedLines = dedupedOnly.reduce((sum, c) => sum + c.split("\n").length, 0);
+      stats.duplicatesRemoved = duplicatesRemoved;
+      return { contents: dedupedOnly, stats };
     }
   }
 
@@ -162,7 +162,7 @@ export function applyPruning(
     deduplicateToolOutputs(truncated);
   stats.duplicatesRemoved = duplicatesRemoved;
 
-  // Step 3: Condense completed issue slices (skip if no signal — trigger-only mode)
+  // Step 3: Condense completed issue slices (skip if no signal)
   const safeToCompact = signal?.safeToCompact ?? [];
   const condensed = deduped.map((c) => {
     const condensedContent = condenseIssueSlice(c, safeToCompact);
@@ -175,7 +175,7 @@ export function applyPruning(
     0,
   );
 
-  // Mark all safe_to_compact blocks as applied (skip if trigger-only)
+  // Mark all safe_to_compact blocks as applied
   if (signal) {
     for (const block of safeToCompact) {
       markAppliedPruning(sessionID, block);
@@ -208,19 +208,10 @@ export function applyPruning(
     linesAfter: stats.prunedLines,
     reductionPct,
     sessionId: process.env.OPENDOC_SESSION_ID || "unknown",
-    triggered: isCompacting(cfg.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default"),
+    triggered: false,
   });
 
   return { contents: condensed, stats };
 }
 
-/** Simple 32-bit string hash for dedup detection (not crypto). */
-function simpleHash(str: string): string {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const chr = str.charCodeAt(i);
-    hash = (hash << 5) - hash + chr;
-    hash |= 0;
-  }
-  return String(hash);
-}
+

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { clearSignal, getCompactionState, setLastSignal } from "../src/compaction/state.js";
+import { clearSignal, getCompactionState, setLastSignal, incrementTurnsSinceCompaction, resetTurnsSinceCompaction, getTurnsSinceCompaction, isInstructionSent, markInstructionSent } from "../src/compaction/state.js";
 
 describe("setLastSignal / getCompactionState / clearSignal", () => {
   afterEach(() => {
@@ -38,5 +38,32 @@ describe("setLastSignal / getCompactionState / clearSignal", () => {
     clearSignal("session-a");
     expect(getCompactionState("session-a")?.lastSignal).toBeNull();
     expect(getCompactionState("session-b")?.lastSignal?.advice).toBe("no_compact");
+  });
+});
+
+describe("turnsSinceCompaction", () => {
+  it("starts at 0", () => {
+    expect(getTurnsSinceCompaction("turns-test")).toBe(0);
+  });
+  it("increments", () => {
+    incrementTurnsSinceCompaction("turns-test");
+    expect(getTurnsSinceCompaction("turns-test")).toBe(1);
+    incrementTurnsSinceCompaction("turns-test");
+    expect(getTurnsSinceCompaction("turns-test")).toBe(2);
+  });
+  it("resets to 0", () => {
+    incrementTurnsSinceCompaction("turns-test");
+    resetTurnsSinceCompaction("turns-test");
+    expect(getTurnsSinceCompaction("turns-test")).toBe(0);
+  });
+});
+
+describe("instructionSent", () => {
+  it("starts as false", () => {
+    expect(isInstructionSent("instr-test")).toBe(false);
+  });
+  it("can be marked sent", () => {
+    markInstructionSent("instr-test");
+    expect(isInstructionSent("instr-test")).toBe(true);
   });
 });

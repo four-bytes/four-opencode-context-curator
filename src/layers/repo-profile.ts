@@ -25,7 +25,6 @@ export class RepoProfileLayer implements Layer {
     for (const filePath of files) {
       try {
         const content = await readFile(filePath, "utf-8");
-        const mtime = await stat(filePath).then(s => s.mtimeMs.toString());
         const extracted = this.extractSections(content);
         if (extracted) {
           sections.push(`## ${this.label(filePath)} (${filePath})`, extracted);

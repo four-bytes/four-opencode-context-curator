@@ -9,12 +9,10 @@ describe("createCompactionInstruction", () => {
     expect(inst.length).toBeGreaterThan(0);
   });
 
-  it("contains compaction_advice keywords", () => {
+  it("contains minimal instruction keywords", () => {
     const inst = createCompactionInstruction();
-    expect(inst).toContain("compaction_advice");
-    expect(inst).toContain("compact_now");
-    expect(inst).toContain("compact_soon");
-    expect(inst).toContain("no_compact");
+    expect(inst).toContain("COMPACTION");
+    expect(inst).toContain("Summarize");
   });
 });
 
