@@ -5,65 +5,65 @@
 ## [0.6.12] - 2026-06-05
 
 ### Fixed
-- message-compactor removed:0 root cause (#82): Keine Messages entfernbar wenn der gesamte Verlauf aus User-Messages besteht (enthalten Task-Prompts und werden bewusst erhalten). Diagnostisches `compaction.remove.stalled` Debug-Event hinzugefügt + Reproducer-Tests.
+- message-compactor removed:0 root cause (#82): No messages removable when the entire history consists of user messages (contain task prompts and are intentionally preserved). Added diagnostic `compaction.remove.stalled` debug event + reproducer tests.
 
 ## [0.6.11] - 2026-06-05
 
 ### Fixed
-- session.compacting clearSignal race (#122): `finally { clearSignal() }` entfernt — opencode führt session.compacting VOR messages.transform aus (compaction.ts:399 vs 406). Signal muss für messages.transform erhalten bleiben, sonst wird compact_now nie erkannt und summarize() nie getriggert.
+- session.compacting clearSignal race (#122): removed `finally { clearSignal() }` — opencode executes session.compacting BEFORE messages.transform (compaction.ts:399 vs 406). Signal must be preserved for messages.transform, otherwise compact_now is never detected and summarize() never triggered.
 
 ## [0.6.9] - 2026-06-04
 
 ### Fixed
-- `compact_now`-Trigger: `summarize()` jetzt mit `await` statt fire-and-forget (`.then().catch()`) — Compaction wird vor dem nächsten LLM-Turn vollständig abgeschlossen, wie beim `/compact`-Slash-Command.
-- `throwOnError: true` zum `summarize()`-Call hinzugefügt — Fehler werden nicht mehr still geschluckt.
-- Double-Trigger-Guard: `canTriggerCompaction()` (30s-Cooldown) ersetzt den fehlerhaften `isCompacting`-Flag (wurde in `session.compacting.finally` zu früh zurückgesetzt).
-- `session.compacting`-Hook vereinfacht — injectiert nur noch Compaction-Instruktionen, kein Flag-Management mehr.
-- `lastSignal` wird jetzt am Ende von `messages.transform` zusammen mit `clearTransformState` bereinigt.
+- `compact_now` trigger: `summarize()` now with `await` instead of fire-and-forget (`.then().catch()`) — compaction completes fully before the next LLM turn, same as `/compact` slash command.
+- Added `throwOnError: true` to `summarize()` call — errors are no longer silently swallowed.
+- Double-trigger guard: `canTriggerCompaction()` (30s cooldown) replaces the faulty `isCompacting` flag (was reset too early in `session.compacting.finally`).
+- Simplified `session.compacting` hook — now only injects compaction instructions, no more flag management.
+- `lastSignal` is now cleaned up at the end of `messages.transform` together with `clearTransformState`.
 
 ### Added
-- File-based Compaction Trigger (`src/compaction/file-trigger.ts`): Liest `~/.cache/opencode/four-opencode-context-curator/force-compact.json` in `messages.transform` und setzt das Compaction-Signal daraus. Ermöglicht manuelles Forcen von Compaction per Datei-Side-Channel — unabhängig vom LLM-generierten `compaction_advice`-Signal.
-- `test/file-trigger.test.ts`: 12 Tests für File-Trigger (valid JSON, empty file, invalid JSON, invalid advice, session override, case insensitivity)
+- File-based Compaction Trigger (`src/compaction/file-trigger.ts`): Reads `~/.cache/opencode/four-opencode-context-curator/force-compact.json` in `messages.transform` and sets the compaction signal from it. Enables manual forcing of compaction via file side-channel — independent of the LLM-generated `compaction_advice` signal.
+- `test/file-trigger.test.ts`: 12 tests for file trigger (valid JSON, empty file, invalid JSON, invalid advice, session override, case insensitivity)
 
 ## [0.6.0] - 2026-06-05
 
 ### Fixed
-- Compaction-Signal-Flow: Phantom-Event-Hook (#102) entfernt — `event`-Hook existierte nicht im opencode Plugin-System, Signal wurde nie geparst. Signal-Parsing jetzt direkt in `experimental.chat.messages.transform` aus letzter assistant message.
-- Signal-Clearing-Timing: `clearSignal` jetzt in `session.compacting` (nach Nutzung), `messages.transform` nutzt nur `clearTransformState` (appliedFor-Sets zurücksetzen, lastSignal bleibt) (#102)
-- summarize-Model: Extraktion aus letzter user message (providerID/modelID) läuft jetzt VOR summarize-Aufruf statt danach (#102)
+- Compaction signal flow: Removed phantom event hook (#102) — `event` hook did not exist in the opencode plugin system, signal was never parsed. Signal parsing now directly in `experimental.chat.messages.transform` from last assistant message.
+- Signal clearing timing: `clearSignal` now in `session.compacting` (after use), `messages.transform` only uses `clearTransformState` (reset appliedFor sets, lastSignal remains) (#102)
+- summarize model: Extraction from last user message (providerID/modelID) now runs BEFORE summarize call instead of after (#102)
 
 ### Removed
-- `src/compaction/file-trigger.ts` + `test/file-trigger.test.ts` — ungenutzter File-Trigger (#102)
-- `"event"` aus `package.json` `hooks` — Phantom-Hook (#102)
-- `createCompactionSignalHook`-Tests auf `parseCompactionSignal` + `setLastSignal` migriert (#102)
+- `src/compaction/file-trigger.ts` + `test/file-trigger.test.ts` — unused file trigger (#102)
+- `"event"` from `package.json` `hooks` — phantom hook (#102)
+- Migrated `createCompactionSignalHook` tests to `parseCompactionSignal` + `setLastSignal` (#102)
 
 ## [0.6.1] - 2026-06-05
 
 ### Fixed
-- Remove dead imports `isInCompactionCooldown`, `decrementCompactionCooldown` aus `four-opencode-context-curator.ts`
-- Remove dead code `createCompactionSignalHook`, `CompactionSignalCallback`, `TextPartPayload`, `PartUpdatedEvent` aus `signal-parser.ts`
+- Remove dead imports `isInCompactionCooldown`, `decrementCompactionCooldown` from `four-opencode-context-curator.ts`
+- Remove dead code `createCompactionSignalHook`, `CompactionSignalCallback`, `TextPartPayload`, `PartUpdatedEvent` from `signal-parser.ts`
 
 ## [0.6.7] - 2026-06-04
 
 ### Fixed
-- Message-Compactor zerstört nicht mehr Subagent-Input-Messages: `truncateMessageParts` und `deduplicateMessageParts` überspringen jetzt User-Messages (enthalten Task-Prompts/Instructions), Drop-Logik in `compactMessageHistory` bewahrt User-Messages beim Entfernen alter Nachrichten
+- Message compactor no longer destroys subagent input messages: `truncateMessageParts` and `deduplicateMessageParts` now skip user messages (contain task prompts/instructions), drop logic in `compactMessageHistory` preserves user messages when removing old messages
 
 ## [0.4.0] - 2026-06-04
 
 ### Removed
-- `triggerCompaction` Funktion und `src/compaction/trigger.ts` entfernt — 6 HTTP-basierte Kandidaten + HTTP-Fallback tot im TUI-Mode (kein HTTP-Server). Lokale Compaction (messages.transform, applyPruning) funktioniert bereits. Persistente Compaction übernimmt opencodes Overflow-Detection (#100)
-- `test/compaction-trigger.test.ts` entfernt
-- `getLastUserModel` und `startCompactionCooldown` aus state.ts entfernt (nur von trigger.ts genutzt)
+- Removed `triggerCompaction` function and `src/compaction/trigger.ts` — 6 HTTP-based candidates + HTTP fallback dead in TUI mode (no HTTP server). Local compaction (messages.transform, applyPruning) already works. Persistent compaction is handled by opencode's overflow detection (#100)
+- Removed `test/compaction-trigger.test.ts`
+- Removed `getLastUserModel` and `startCompactionCooldown` from state.ts (only used by trigger.ts)
 
 ## [0.3.18] - 2026-06-04
 
 ### Changed
-- AGENTS.md: Build-Disziplin dokumentiert (Version-Bump + bun run build Pflicht)
+- AGENTS.md: Documented build discipline (version bump + bun run build mandatory)
 
 ## [0.3.17] - 2026-06-04
 
 ### Removed
-- console.warn aus applyPruning() entfernt (#96) — produzierte stderr-Output im TUI, Debug-Logging läuft über CC_DEBUG
+- Removed console.warn from applyPruning() (#96) — produced stderr output in TUI, debug logging runs via CC_DEBUG
 
 ### Changed
 - @opencode-ai/plugin: 1.15.10 → 1.15.13
@@ -71,35 +71,35 @@
 ## [0.3.16] - 2026-06-04
 
 ### Fixed
-- Compaction signal unsichtbar für Transforms nach Session-Fence-Refactoring (#94): Event-Hook speichert Signal jetzt zusätzlich unter "default" als Fallback für Transforms ohne Session-ID
+- Compaction signal invisible to transforms after session-fence refactoring (#94): Event hook now additionally stores signal under "default" as fallback for transforms without session ID
 
 ## [0.3.14] - 2026-06-03
 
 ### Fixed
-- Token-Threshold-Guard (CC_COMPACT_MIN_TOKENS) aus compact_now-Trigger entfernt — blockte fast alle Compactions wegen strukturellem Undercounting (#90)
-- 3-Turn-Post-Compaction-Cooldown (v0.3.13) übernimmt Doppel-Trigger-Schutz — Token-Gate redundant und schädlich
+- Removed token threshold guard (CC_COMPACT_MIN_TOKENS) from compact_now trigger — blocked almost all compactions due to structural undercounting (#90)
+- 3-turn post-compaction cooldown (v0.3.13) handles double-trigger protection — token gate redundant and harmful
 
 ### Changed
-- estimateMessageTokens + debug-event compaction.tokens.estimated bleiben als reine Diagnose erhalten
+- estimateMessageTokens + debug event compaction.tokens.estimated remain as pure diagnostics
 
 ## [0.3.13] - 2026-06-03
 
 ### Fixed
-- Post-compaction cooldown (3 turns): verhindert Doppel-compact_now-Signal direkt nach erfolgreicher Compaction (#88)
-- Signal-Injektor jetzt Cooldown-bewusst: hängt Zusatz-Hinweis an wenn Cooldown aktiv ist (#88)
-- Event-Hook downgradet compact_now auf no_compact + writeDiaryEntry mit downgraded:true wenn Cooldown aktiv (#88)
-- Diary-Entry um optionales downgraded-Feld erweitert (backward-compatibel) (#88)
+- Post-compaction cooldown (3 turns): prevents double compact_now signal immediately after successful compaction (#88)
+- Signal injector now cooldown-aware: appends additional hint when cooldown is active (#88)
+- Event hook downgrades compact_now to no_compact + writeDiaryEntry with downgraded:true when cooldown is active (#88)
+- Extended diary entry with optional downgraded field (backward compatible) (#88)
 
 ## [0.3.12] - 2026-06-03
 
 ### Added
-- Token-Guard vor Compaction-Trigger: Skip wenn geschätzter Kontext < `CC_COMPACT_MIN_TOKENS` (default 50000) in src/four-opencode-context-curator.ts (#86)
-- `src/compaction/tokens.ts` — estimateTokens + estimateMessageTokens (adaptiert aus four-opencode-token-budget-guard)
-- Token-Schätzung in messages.transform via estimateMessageTokens, gespeichert in state.lastTokenEstimate
+- Token guard before compaction trigger: Skip when estimated context < `CC_COMPACT_MIN_TOKENS` (default 50000) in src/four-opencode-context-curator.ts (#86)
+- `src/compaction/tokens.ts` — estimateTokens + estimateMessageTokens (adapted from four-opencode-token-budget-guard)
+- Token estimation in messages.transform via estimateMessageTokens, stored in state.lastTokenEstimate
 - Debug-Events `compaction.skip.below_threshold` + `compaction.tokens.estimated`
 
 ### Changed
-- Cooldown-Default in canTriggerCompaction von 5000 ms auf 30000 ms erhöht (src/compaction/state.ts:90)
+- Increased cooldown default in canTriggerCompaction from 5000 ms to 30000 ms (src/compaction/state.ts:90)
 
 ## [0.3.11] - 2026-06-03
 
@@ -165,46 +165,46 @@
 ## v0.3.4 — 2026-06-02
 
 ### Fixed
-- triggerCompaction verwendet jetzt `client.v2.session.compact()` als primären SDK-Pfad, `client.session.compact()` als Legacy-Fallback (#65)
-- Debug-Logging für jeden Compaction-Trigger-Kandidaten, HTTP-Fallback und CC_COMPACTION_COMMAND (#65)
-- serverUrl-Prüfung vor Trigger mit separates Debug-Event (#65)
+- triggerCompaction now uses `client.v2.session.compact()` as primary SDK path, `client.session.compact()` as legacy fallback (#65)
+- Debug logging for each compaction trigger candidate, HTTP fallback, and CC_COMPACTION_COMMAND (#65)
+- serverUrl check before trigger with separate debug event (#65)
 
 ## v0.3.2 — 2026-06-02
 
 ### Added
-- Compaction Signals JSONL-Logging: Alle Signale werden ins JSONL-Diary geschrieben, rote console.error entfernt (#43, #44)
+- Compaction signals JSONL logging: All signals are written to the JSONL diary, red console.error removed (#43, #44)
 
 ### Fixed
-- Compaction Signal aus sichtbarer Ausgabe entfernt + `CC_COMPACTION_COMMAND` Env-Fallback (#45, #46)
-- triggerCompaction verwendet `client.session.summarize()` mit HTTP-Fallback (#47, #48)
-- message-compactor.ts Aktualisierung (#41)
-- Per-Transform-Tracking verhindert Signal-Race zwischen applyPruning und compactMessageHistory (#49, #52)
-- triggerCompaction: `summarize()` ohne Env-Vars möglich, body optional (#50, #53)
-- session.compacting setzt `CC_COMPACTION_TRIGGER`, transforms wenden generisches Pruning im Trigger-Only-Modus an (#51, #54)
-- Event Hook in opencode Manifest registriert (#39, #42)
-- Compaction Signal wird via Event Hook statt chat.message verarbeitet (#39, #40)
-- Toter `extractText` Helper in message-compactor entfernt (#41, #55)
+- Compaction signal removed from visible output + `CC_COMPACTION_COMMAND` env fallback (#45, #46)
+- triggerCompaction uses `client.session.summarize()` with HTTP fallback (#47, #48)
+- message-compactor.ts update (#41)
+- Per-transform tracking prevents signal race between applyPruning and compactMessageHistory (#49, #52)
+- triggerCompaction: `summarize()` possible without env vars, body optional (#50, #53)
+- session.compacting sets `CC_COMPACTION_TRIGGER`, transforms apply generic pruning in trigger-only mode (#51, #54)
+- Event hook registered in opencode manifest (#39, #42)
+- Compaction signal is processed via event hook instead of chat.message (#39, #40)
+- Dead `extractText` helper removed from message-compactor (#41, #55)
 
 ## v0.10.0 — 2026-06-01
 
 ### Added
-- aktiver compact_now-Trigger: löst opencode compact-Endpoint via SDK-client aus, sobald verfügbar; robuste Laufzeit-Erkennung mehrerer Methodenpfade mit graceful fallback auf passive Compaction (#37)
+- active compact_now trigger: triggers opencode compact endpoint via SDK client as soon as available; robust runtime detection of multiple method paths with graceful fallback to passive compaction (#37)
 
 ## v0.9.1 — 2026-06-01
 
 ### Fixed
-- compact_now ohne safe_to_compact ist kein No-Op mehr: Drop auf letzte 15 + Truncate + Dedup laufen jetzt auch bei leerer Block-Liste (#35)
-- compact_soon ohne safe_to_compact truncatet/dedupliziert, droppt nicht (#35)
-- toten aktiven Trigger client.v2.session.compact entfernt — opencode-API existiert nicht (#35)
+- compact_now without safe_to_compact is no longer a no-op: drop to last 15 + truncate + dedup now run even with empty block list (#35)
+- compact_soon without safe_to_compact truncates/deduplicates, does not drop (#35)
+- dead active trigger client.v2.session.compact removed — opencode API does not exist (#35)
 
 ## v0.9.0 — 2026-06-01
 
 ### Fixed
-- Fix (#33): compact_now triggert API-Compaction jetzt immer, safe_to_compact ist optional
+- Fix (#33): compact_now now always triggers API compaction, safe_to_compact is optional
 
 ### Added
-- Trigger-Diary (#28): compact_now Event wird ins JSONL-Diary geschrieben
-- Toast-Notification: ⚠️ COMPACTION TRIGGERED im stderr/TUI
+- Trigger diary (#28): compact_now event is written to JSONL diary
+- Toast notification: ⚠️ COMPACTION TRIGGERED in stderr/TUI
 
 ## v0.8.0 — 2026-06-01
 
@@ -218,94 +218,94 @@
 ### Changed
 - Aggressive message compaction (#24): compact_now drops oldest messages (keeps last 15)
 - sessionId extracted from message info (not env)
-- Logging verbessert: dropped count + sessionId im console.error
-- Tests: 2 neue Tests (drop verification, compact_soon no-drop)
+- Improved logging: dropped count + sessionId in console.error
+- Tests: 2 new tests (drop verification, compact_soon no-drop)
 ## v0.6.0 — 2026-06-01
 
 ### Added
-- messages.transform Compaction (#22): Echte Message-History-Kürzung vor LLM-Call
+- messages.transform Compaction (#22): Real message history truncation before LLM call
 - `src/compaction/message-compactor.ts`: truncateMessageParts, deduplicateMessageParts
-- Tool-Outputs >50 Zeilen → Header+Footer + Marker
-- Duplicate-Tool-Outputs → "↑ see above (message N)" Referenz
-- Compaction-Statistiken geloggt via console.error
+- Tool outputs >50 lines → header+footer + marker
+- Duplicate tool outputs → "↑ see above (message N)" reference
+- Compaction statistics logged via console.error
 - Tests: 9 message-compaction tests (60 total)
 
 ## v0.5.0 — 2026-06-01
 
 ### Added
-- Prefix-Token-Reduktion-Messung (#20): Integrationstest mit Mock-Workspace
-- `test/prefix-token-measurement.test.ts` — ≥50% Reduktion gegenüber Full-File-Context
-- Fixture `test/fixtures/sample-AGENTS.md` — realistische Projekt-Doku mit Filler
-- 5 neue Tests (core, repo, task, pipeline, reduction measurement)
+- Prefix token reduction measurement (#20): Integration test with mock workspace
+- `test/prefix-token-measurement.test.ts` — ≥50% reduction compared to full file context
+- Fixture `test/fixtures/sample-AGENTS.md` — realistic project docs with filler
+- 5 new tests (core, repo, task, pipeline, reduction measurement)
 
 ## v0.4.0 — 2026-06-01
 
 ### Added
-- Compaction Module (Wave P4a): Session-Inhalte heuristisch vor LLM-Calls kürzen
-- Compaction Signal-Injection (#12): `compaction_advice` Instruction im System-Prompt
-- Compaction Signal-Parser (#12): `chat.message` Hook, parst no_compact/compact_soon/compact_now Signale
-- Heuristic Pruning Engine (#14): Tool-Logs truncaten, Duplikate dedupen, completed Issues verdichten
-- Compaction State (#14): Signal-Tracking, applied-Blocks, History
-- session.compacting Hook (#15): Compaction-Kontext + Prompt für LLM-gesteuerte Kompaktierung
-- Compaction Diary (#16): JSONL pro Session-Tag mit Reduktions-Statistiken
-- tbg-Integration (#15): `CC_COMPACTION_TRIGGER` Env-Variable
+- Compaction Module (Wave P4a): Heuristically truncate session content before LLM calls
+- Compaction Signal Injection (#12): `compaction_advice` instruction in system prompt
+- Compaction Signal Parser (#12): `chat.message` hook, parses no_compact/compact_soon/compact_now signals
+- Heuristic Pruning Engine (#14): Truncate tool logs, deduplicate duplicates, compact completed issues
+- Compaction State (#14): Signal tracking, applied blocks, history
+- session.compacting Hook (#15): Compaction context + prompt for LLM-driven compaction
+- Compaction Diary (#16): JSONL per session tag with reduction statistics
+- tbg integration (#15): `CC_COMPACTION_TRIGGER` env variable
 - Tests: 13 pruning tests + 3 integration tests (35 total)
 
 ### Changed
-- `experimental.chat.system.transform`: Pruning-Engine nach Layer-Pipeline integriert
+- `experimental.chat.system.transform`: Pruning engine integrated into layer pipeline
 
 ## v0.5.1 — 2026-05-31
 
 ### Fixed
-- System-Prompt-Injection: Sanitizer entfernt Sub-Agent-Artifakte (`</response>`, `</function_call>`, etc.) aus Layer-Content
-- `src/sanitize.ts`: Erkennung standalone closing XML/JSON-Artifakte vs. echte Code-Inhalte
+- System prompt injection: Sanitizer removes sub-agent artifacts (`</response>`, `</function_call>`, etc.) from layer content
+- `src/sanitize.ts`: Detection of standalone closing XML/JSON artifacts vs. real code content
 
 ## v0.5.0 — 2026-05-31
 
 ### Added
-- task_slice Layer (Issue #5): Liest Session-Task aus OPENDOC_TASK Env, TTL 30min
-- issue_slice Layer (Issue #5): Detektiert GitHub-Issue via Branch-Name (GH-NR) oder Env, fetch via gh CLI
+- task_slice Layer (Issue #5): Reads session task from OPENDOC_TASK env, TTL 30min
+- issue_slice Layer (Issue #5): Detects GitHub issue via branch name (GH-NR) or env, fetch via gh CLI
 - 4 Tests (3 task + 1 issue)
-- 3 Cache-Layer jetzt registriert: core_prefix, task_slice, issue_slice (repo_profile ausstehend)
+- 3 cache layers now registered: core_prefix, task_slice, issue_slice (repo_profile pending)
 
 ## v0.4.0 — 2026-05-31
 
 ### Added
-- repo_profile Layer (Issue #4): Liest AGENTS.md/CLAUDE.md aus Workspace-Root
-- Extrahiert Tech-Stack, Conventions, Forbidden-Patterns (max 3000 chars)
+- repo_profile Layer (Issue #4): Reads AGENTS.md/CLAUDE.md from workspace root
+- Extracts tech stack, conventions, forbidden patterns (max 3000 chars)
 - Cache via repo-path-hash + file-mtime
 - Tests: 2 Cases
 
 ## v0.3.1 — 2026-05-31
 
 ### Fixed
-- DOM-Lib wiederhergestellt für `@opencode-ai/plugin` HeadersInit Typ-Kompatibilität
+- DOM lib restored for `@opencode-ai/plugin` HeadersInit type compatibility
 
 ## v0.3.0 — 2026-05-31
 
 ### Added
-- core_prefix Layer: Statische Global Rules (Stop-Mode, Search, Quality Gates) (#3, #8)
-- `src/layers/core-prefix.ts`: CorePrefixLayer-Klasse
+- core_prefix Layer: Static global rules (Stop-Mode, Search, Quality Gates) (#3, #8)
+- `src/layers/core-prefix.ts`: CorePrefixLayer class
 - Tests: 2 Cases (static content, source reference)
 
 ## v0.3.2 — 2026-06-02
 
 ### Fixed
-- Per-Transform Tracking verhindert Signal-Race zwischen applyPruning() und compactMessageHistory() — separate appliedFor-Sets, Signal wird erst nach beiden ge-cleart (#52)
-- triggerCompaction() ruft summarize() jetzt auch ohne CC_COMPACTION_PROVIDER_ID/CC_COMPACTION_MODEL_ID auf — body ist laut SDK optional, opencode nutzt Default-Compact-Model (#53)
-- session.compacting-Hook setzt CC_COMPACTION_TRIGGER=true und löscht ihn nicht vorzeitig; Transforms wenden generische Heuristiken auch im Trigger-Only-Mode an (ohne Signal) (#54)
+- Per-transform tracking prevents signal race between applyPruning() and compactMessageHistory() — separate appliedFor sets, signal is only cleared after both (#52)
+- triggerCompaction() now calls summarize() even without CC_COMPACTION_PROVIDER_ID/CC_COMPACTION_MODEL_ID — body is optional per SDK, opencode uses default compact model (#53)
+- session.compacting hook sets CC_COMPACTION_TRIGGER=true and does not clear it prematurely; transforms apply generic heuristics even in trigger-only mode (without signal) (#54)
 
 ## v0.2.0 — 2026-05-31
 
 ### Added
-- Layered Cacheable Prefix Architecture: Hook-System, Pipeline mit TTL-Cache und Layer-Typen (#2, #7)
+- Layered Cacheable Prefix Architecture: Hook system, pipeline with TTL cache and layer types (#2, #7)
 - `src/layers.ts`: LayerConfig, LayerContent, Layer Interfaces
 - `src/hook.ts`: createHookContext, runLayerPipeline
-- Plugin-Entry registriert `experimental.chat.system.transform` Hook
+- Plugin entry registers `experimental.chat.system.transform` hook
 
 ## v0.1.0 — 2026-05-31
 
 ### Added
-- Initial skeleton (Sprint 2 der opencode-plugins Strategy)
-- Plugin-Entry src/four-opencode-context-curator.ts (empty plugin)
-- Keine Hooks oder Logik — kommt in Issue #2 ff.
+- Initial skeleton (Sprint 2 of the opencode-plugins strategy)
+- Plugin entry src/four-opencode-context-curator.ts (empty plugin)
+- No hooks or logic — comes in Issue #2 ff.

@@ -1,7 +1,7 @@
 {
   "name": "@four-bytes/four-opencode-context-curator",
-  "version": "0.6.17",
-  "description": "opencode-Plugin: kuratiert Context vor LLM-Request — statt full-file nur geänderte Blöcke + N Kontext-Zeilen",
+  "version": "0.7.3",
+  "description": "opencode Plugin: curates context before LLM requests — changed blocks + N context lines instead of full files",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/four-opencode-context-curator.js",
