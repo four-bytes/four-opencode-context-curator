@@ -6,6 +6,7 @@ import { simpleHash } from "./hash.js";
 export interface Part {
   type: string;
   text?: string;
+  tool?: string;
 }
 
 export interface MessageItem {
@@ -23,9 +24,8 @@ export interface CompactionResult {
   sessionId: string;
 }
 
-const MAX_TOOL_LINES = 50;
-const HEADER_LINES = 10;
-const FOOTER_LINES = 10;
+// Configurable thresholds — read from env vars with sensible defaults.
+// These are read inside truncateMessageParts() where they're used.
 
 function countChars(messages: MessageItem[]): number {
   let total = 0;
@@ -40,18 +40,53 @@ function countChars(messages: MessageItem[]): number {
 }
 
 export function truncateMessageParts(messages: MessageItem[]): number {
-  let truncations = 0;
+  // Layer 1: Configurable Thresholds from env vars
+  const maxToolLines = parseInt(process.env.CC_MAX_TOOL_LINES || "200", 10) || 200;
+  const headerLines = parseInt(process.env.CC_TOOL_HEADER_LINES || "20", 10) || 20;
+  const footerLines = parseInt(process.env.CC_TOOL_FOOTER_LINES || "20", 10) || 20;
+
+  // Layer 2: Freshness Guard — determine turn indices (turn = user message boundary)
+  const messageTurns: number[] = [];
+  let currentTurn = -1;
   for (const msg of messages) {
+    if (msg.info.role === "user") currentTurn++;
+    messageTurns.push(currentTurn);
+  }
+  const maxTurn = currentTurn;
+  // preserve last 2 turns (current and previous)
+  // When maxTurn < 0 (no user messages), freshness guard is not applied
+  const freshnessThreshold = maxTurn - 1;
+
+  let truncations = 0;
+  for (let msgIdx = 0; msgIdx < messages.length; msgIdx++) {
+    const msg = messages[msgIdx];
+
     // NEVER truncate user messages — they contain task prompts/instructions
     if (msg.info.role === "user") continue;
+
+    // Layer 2: Freshness Guard — skip messages in the last 2 turns
+    // maxTurn < 0 (no user messages) → guard not applied
+    // maxTurn = 0 (1 turn) → all preserved (freshnessThreshold = -1)
+    // maxTurn = 1 (2 turns) → all preserved (freshnessThreshold = 0)
+    if (maxTurn >= 0 && messageTurns[msgIdx] >= freshnessThreshold) continue;
+
+    // Layer 3: Per-Tool-Type Thresholds
+    let toolThreshold = maxToolLines;
+    for (const part of msg.parts) {
+      if (part.type === "tool" && part.tool === "task") {
+        toolThreshold = Math.round(maxToolLines * 2.5);
+        break;
+      }
+    }
+
     for (const part of msg.parts) {
       if (part.type === "text" && part.text) {
         const lines = part.text.split("\n");
-        if (lines.length > MAX_TOOL_LINES) {
+        if (lines.length > toolThreshold) {
           part.text = [
-            ...lines.slice(0, HEADER_LINES),
-            `… [${lines.length - HEADER_LINES - FOOTER_LINES} lines truncated] …`,
-            ...lines.slice(-FOOTER_LINES),
+            ...lines.slice(0, headerLines),
+            `… [${lines.length - headerLines - footerLines} lines truncated] …`,
+            ...lines.slice(-footerLines),
           ].join("\n");
           truncations++;
         }
