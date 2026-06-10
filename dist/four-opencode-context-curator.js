@@ -571,9 +571,6 @@ function logDebugEvent(type, payload) {
 }
 
 // src/compaction/message-compactor.ts
-var MAX_TOOL_LINES = 50;
-var HEADER_LINES = 10;
-var FOOTER_LINES = 10;
 function countChars(messages) {
   let total = 0;
   for (const msg of messages) {
@@ -586,19 +583,41 @@ function countChars(messages) {
   return total;
 }
 function truncateMessageParts(messages) {
-  let truncations = 0;
+  const maxToolLines = parseInt(process.env.CC_MAX_TOOL_LINES || "200", 10) || 200;
+  const headerLines = parseInt(process.env.CC_TOOL_HEADER_LINES || "20", 10) || 20;
+  const footerLines = parseInt(process.env.CC_TOOL_FOOTER_LINES || "20", 10) || 20;
+  const messageTurns = [];
+  let currentTurn = -1;
   for (const msg of messages) {
     if (msg.info.role === "user")
+      currentTurn++;
+    messageTurns.push(currentTurn);
+  }
+  const maxTurn = currentTurn;
+  const freshnessThreshold = maxTurn - 1;
+  let truncations = 0;
+  for (let msgIdx = 0;msgIdx < messages.length; msgIdx++) {
+    const msg = messages[msgIdx];
+    if (msg.info.role === "user")
       continue;
+    if (maxTurn >= 0 && messageTurns[msgIdx] >= freshnessThreshold)
+      continue;
+    let toolThreshold = maxToolLines;
+    for (const part of msg.parts) {
+      if (part.type === "tool" && part.tool === "task") {
+        toolThreshold = Math.round(maxToolLines * 2.5);
+        break;
+      }
+    }
     for (const part of msg.parts) {
       if (part.type === "text" && part.text) {
         const lines = part.text.split(`
 `);
-        if (lines.length > MAX_TOOL_LINES) {
+        if (lines.length > toolThreshold) {
           part.text = [
-            ...lines.slice(0, HEADER_LINES),
-            `\u2026 [${lines.length - HEADER_LINES - FOOTER_LINES} lines truncated] \u2026`,
-            ...lines.slice(-FOOTER_LINES)
+            ...lines.slice(0, headerLines),
+            `\u2026 [${lines.length - headerLines - footerLines} lines truncated] \u2026`,
+            ...lines.slice(-footerLines)
           ].join(`
 `);
           truncations++;

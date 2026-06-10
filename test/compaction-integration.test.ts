@@ -151,10 +151,14 @@ describe("Compaction Integration", () => {
   it("trigger-only compactMessageHistory applies generic heuristics", async () => {
     clearSignal("test");
 
+    // 3 turns: turn 0 has long output (old → truncated), turns 1-2 are fresh → preserved
     const messages = [
       { info: { role: "user" }, parts: [{ type: "text", text: "hello" }] },
-      { info: { role: "assistant" }, parts: [{ type: "text", text: "hi there" }] },
-      { info: { role: "assistant" }, parts: [{ type: "text", text: Array(80).fill("log").join("\n") }] },
+      { info: { role: "assistant" }, parts: [{ type: "text", text: Array(250).fill("log").join("\n") }] },
+      { info: { role: "user" }, parts: [{ type: "text", text: "prompt 2" }] },
+      { info: { role: "assistant" }, parts: [{ type: "text", text: "response 2" }] },
+      { info: { role: "user" }, parts: [{ type: "text", text: "prompt 3" }] },
+      { info: { role: "assistant" }, parts: [{ type: "text", text: "response 3" }] },
     ];
 
     const result = compactMessageHistory(messages, "test");
