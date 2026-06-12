@@ -1,22 +1,54 @@
 # @four-bytes/four-opencode-context-curator
 
-opencode Plugin: curates context before LLM requests — changed blocks + N context lines instead of full files. Token budget control.
+> Context curation before LLM requests — layered cacheable prefixes, token compaction, intelligent file selection.
 
-**Status:** Alpha v0.2.0 — Layered Prefix Architecture
+[![npm](https://img.shields.io/npm/v/@four-bytes/four-opencode-context-curator)](https://www.npmjs.com/package/@four-bytes/four-opencode-context-curator)
+[![license](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![bun](https://img.shields.io/badge/runtime-bun-orange)](https://bun.sh)
 
-## Architecture Layers
+## Why?
 
-| Layer | ID | Stability | TTL |
-|---|---|---|---|
-| Core Prefix | `core_prefix` | Global, stable | — |
-| Repo Profile | `repo_profile` | Per Repo, semi-stable | — |
-| Task Slice | `task_slice` | Per Session | 30 min |
-| Issue Slice | `issue_slice` | On-Demand | — |
+opencode sends your entire project context to the LLM — wasting tokens on irrelevant files. Context Curator pre-filters files before each request: only changed blocks + surrounding context, prioritized by relevance. Dirac-inspired architecture saves significant tokens per session.
 
-## Limitations v0.2.0
-- Layer implementations follow in #3 (core_prefix), #4 (repo_profile), #5 (task_slice + issue_slice)
-- Currently no layer content is generated (empty `layers[]`)
-- Pipeline + Cache + TTL mechanics fully functional
+## Quickstart
+
+```bash
+opencode plugin @four-bytes/four-opencode-context-curator -g
+```
+
+Restart opencode.
+
+## Architecture
+
+4-layer cacheable prefix system with stability TTLs:
+
+| Layer | Content | Stability |
+|-------|---------|-----------|
+| Core Prefix | Project structure, conventions | High (TTL: session) |
+| Repo Profile | Git history, recent changes | Medium (TTL: 5 min) |
+| Task Slice | Current task context | Low (TTL: per-request) |
+| Issue Slice | Related issue context | Low (TTL: per-request) |
+
+Compaction module reduces context when approaching token budget limits.
+
+## Configuration
+
+No config file required — works out of the box. Token budget defaults to 8000 tokens. Behavior adjustable via opencode configuration.
+
+## Contributing
+
+PRs welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+```bash
+bun install
+bun run build
+bun test
+```
 
 ## License
-Apache-2.0 — Copyright 2025 Four Bytes
+
+Apache-2.0 — see [LICENSE](LICENSE)
+
+---
+
+> If this plugin saves you tokens, consider leaving a ⭐ on [GitHub](https://github.com/four-bytes/four-opencode-context-curator).
