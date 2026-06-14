@@ -1,3 +1,5 @@
+**Status:** Last reviewed 2026-06-14. 2/2 fixed (brain), 3/3 fixed (plugin-lib), 2/2 fixed (local-bus), 2/2 fixed (context-curator).
+
 # Known Issues & Postmortems
 
 ## 2026-06-03 — Compaction Self-Triggering Infinite Loop
@@ -21,6 +23,8 @@ Compaction triggered 570+ times within minutes, fired 4x in parallel at the same
 - Root cause: `parseCompactionSignal` did not validate signal structure
 - Fix verified: regex validation + rate-limiting implemented
 
+✅ FIXED — regex validation, non-empty `safe_to_compact` guard, and rate-limiting shipped.
+
 ## 2026-06-02 — Memory Leak in Context Cache
 
 ### Symptom
@@ -41,3 +45,4 @@ Context cache size grew linearly with session duration, peaking at 1.2GB after 2
 - Root cause: `ContextCache` lacked automatic cleanup
 - Fix verified: TTL-based cleanup implemented
 
+✅ FIXED — TTL-based `clearOldContexts` runs on cache access.
