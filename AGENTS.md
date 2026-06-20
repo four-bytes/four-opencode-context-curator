@@ -1,6 +1,6 @@
 # four-opencode-context-curator — AGENTS.md
 
-Pointer to central standards: `~/.personal-config/ai-shared/AGENTS.md`.
+Pointer to central standards: `~/ai-shared-rules/AGENTS.md`.
 
 ## Convention
 - Source: `src/four-opencode-context-curator.ts`
