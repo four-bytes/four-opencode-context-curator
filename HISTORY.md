@@ -1,5 +1,16 @@
 # Project Change History
 
+## [0.7.13] - 2026-09-23
+
+### Added
+- Per-agent pruning config (#149): `context_curator.pruning` in `opencode.json`/`opencode.jsonc`, resolution order agent → default → built-in defaults; JSONC comments supported, non-numeric values ignored.
+- `context_report` tool: ≤10-line session report (turns, input/turn avg/max/trend, pruned lines, top pruned sources) from the compaction diary + per-turn token history.
+- Diary attribution: `agent` and `tool`/layer-source on every compaction diary entry.
+
+### Fixed
+- Diary write path now keys on the entry's own `sessionId` (not `process.env.OPENDOC_SESSION_ID`), so `context_report` can find entries by session id.
+- Tool-log truncation now targets opencode `ToolPart` (`state.output`) instead of text parts, so tool attribution (run_tests/explore/git_diff) is real.
+
 ## [0.5.0] - 2026-06-04
 
 ## [0.6.12] - 2026-06-05
