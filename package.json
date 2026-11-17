@@ -15,8 +15,9 @@
   "scripts": {
     "build": "bun build src/four-opencode-context-curator.ts --outdir dist --target bun --format esm",
     "dev": "bun build src/four-opencode-context-curator.ts --outdir dist --target bun --format esm --watch",
-    "typecheck": "bunx tsc --noEmit",
-    "test": "bun test"
+    "postinstall": "bun run build",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit"
   },
   "keywords": [
     "opencode",
