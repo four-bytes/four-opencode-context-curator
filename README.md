@@ -35,6 +35,51 @@ Compaction module reduces context when approaching token budget limits.
 
 No config file required — works out of the box. Token budget defaults to 8000 tokens. Behavior adjustable via opencode configuration.
 
+### Per-agent pruning policy
+
+Pruning aggressiveness can be tuned per agent in `opencode.json` (or `opencode.jsonc`):
+
+```jsonc
+{
+  "context_curator": {
+    "pruning": {
+      "default":   { "maxToolLogLines": 40 },
+      "architect": { "maxToolLogLines": 8, "minCompletedBlocks": 2 },
+      "build":     { "maxToolLogLines": 8 }
+    }
+  }
+}
+```
+
+Resolution order: **agent entry → `default` entry → built-in defaults**
+(`maxToolLogLines: 50`, `headerLines: 10`, `footerLines: 10`, `minCompletedBlocks: 1`).
+Unknown agent names fall back silently. Non-numeric or negative values are ignored.
+
+## Tools
+
+### `context_report`
+
+Read-only report of context-compaction stats for the current session (≤10 lines):
+
+```
+CONTEXT — session 4f2a…, agent architect
+  turns          47
+  input/turn     avg 162k · max 198k · trend +1.4k/turn
+  pruned         312k lines total
+  top sources    run_tests 41% · explore 22% · git_diff 14%
+```
+
+`turns`/`input/turn` come from the per-turn token history; `pruned` and
+`top sources` come from the compaction diary, grouped by the tool that produced
+the pruned output. Optional `session` argument overrides the session id (defaults
+to the current session).
+
+## Diary attribution
+
+Every compaction diary entry records the originating `agent` and, where applicable,
+the `tool` (or layer source) that produced the pruned block. Entries written before
+this attribution existed lack those fields and are still read correctly.
+
 ## Contributing
 
 PRs welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).

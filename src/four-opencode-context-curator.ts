@@ -1,6 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { DEFAULT_LAYERS, type Layer } from "./layers.js";
-import { createHookContext, runLayerPipeline } from "./hook.js";
+import { createHookContext, runLayerPipelineWithSources } from "./hook.js";
 import { sanitizeLayerContent } from "./sanitize.js";
 import { RepoProfileLayer } from "./layers/repo-profile.js";
 import { TaskSliceLayer } from "./layers/task-slice.js";
@@ -8,9 +8,11 @@ import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
 import { parseCompactionSignal, stripCompactionSignal } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
-import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, setLastTokenEstimate, getCompactionCooldownRemaining, setCompactionCooldown, decrementCompactionCooldown, incrementTurnsSinceCompaction, resetTurnsSinceCompaction, getTurnsSinceCompaction, isInstructionSent, markInstructionSent } from "./compaction/state.js";
+import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, setLastTokenEstimate, setLastAgent, getLastAgent, getCompactionCooldownRemaining, setCompactionCooldown, decrementCompactionCooldown, incrementTurnsSinceCompaction, resetTurnsSinceCompaction, getTurnsSinceCompaction, isInstructionSent, markInstructionSent } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
 import { estimateMessageTokens } from "./compaction/tokens.js";
+import { loadPruningConfig, PruningConfigResolver } from "./compaction/config-resolver.js";
+import { contextReportTool } from "./compaction/context-report.js";
 import { logDebugEvent } from "./debug-logger.js";
 
 /**
@@ -44,6 +46,12 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
 
   const hookCtx = createHookContext(DEFAULT_LAYERS, layers);
   const client = ctx.client; // Capture client for summarize() call
+
+  // Per-agent pruning config (opencode.json / opencode.jsonc → context_curator.pruning).
+  const directory = (ctx as { directory?: string }).directory;
+  const configResolver = new PruningConfigResolver(loadPruningConfig(directory), (agent) => {
+    logDebugEvent("pruning.config.unknown_agent", { agent });
+  });
 
   /**
    * Trigger native opencode session compaction (same as /compact slash command).
@@ -84,14 +92,20 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
   }
 
   return {
+    tool: {
+      context_report: contextReportTool,
+    },
     "experimental.chat.system.transform": async (_input, output) => {
       const sessionID = (_input as any)?.sessionID ?? "default";
-      const layerContents = await runLayerPipeline(hookCtx);
-      logDebugEvent("compaction.system.transform", { layerCount: layerContents.length });
+      const agent = getLastAgent(sessionID);
+      const resolved = configResolver.resolve(agent);
+      const layerContents = await runLayerPipelineWithSources(hookCtx);
+      logDebugEvent("compaction.system.transform", { layerCount: layerContents.length, agent });
 
       if (layerContents.length > 0) {
-        const sanitized = layerContents.map(sanitizeLayerContent);
-        const pruned = applyPruning(sanitized, { sessionID });
+        const sanitized = layerContents.map((lc) => sanitizeLayerContent(lc.content));
+        const sources = layerContents.map((lc) => lc.source ?? lc.id);
+        const pruned = applyPruning(sanitized, { ...resolved, sessionID, agent: agent ?? undefined }, sources);
         const prefix = pruned.contents.join("\n\n");
         output.system.push(prefix);
       }
@@ -129,6 +143,20 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       const sessionID = (_input as any)?.sessionID ?? "default";
       try {
         logDebugEvent("compaction.messages.transform", { messageCount: output.messages.length });
+
+        // Track the current agent from message info (each message carries info.agent).
+        // Most recent non-empty agent wins; system.transform resolves config from it.
+        let lastAgent: string | null = null;
+        for (let i = output.messages.length - 1; i >= 0; i--) {
+          const info = (output.messages[i] as { info?: { agent?: unknown } }).info;
+          if (info && typeof info.agent === "string" && info.agent.trim().length > 0) {
+            lastAgent = info.agent;
+            break;
+          }
+        }
+        if (lastAgent !== null) {
+          setLastAgent(sessionID, lastAgent);
+        }
 
         // Derive provider/model from last user message for summarize candidate
         let lastUserMsg: (typeof output.messages)[number] | undefined;
@@ -228,6 +256,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
             parts: Array<{ type: string; text?: string }>;
           }>,
           sessionID,
+          lastAgent ?? undefined,
         );
 
         // Estimate total tokens after compaction

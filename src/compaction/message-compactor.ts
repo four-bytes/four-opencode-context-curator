@@ -7,6 +7,12 @@ export interface Part {
   type: string;
   text?: string;
   tool?: string;
+  /** Tool-call result state (opencode ToolPart). output holds the tool log text. */
+  state?: {
+    status?: string;
+    output?: string;
+    input?: Record<string, unknown>;
+  };
 }
 
 export interface MessageItem {
@@ -39,7 +45,18 @@ function countChars(messages: MessageItem[]): number {
   return total;
 }
 
-export function truncateMessageParts(messages: MessageItem[]): number {
+export interface ToolStat {
+  linesBefore: number;
+  linesAfter: number;
+  occurrences: number;
+}
+
+export interface TruncationResult {
+  count: number;
+  perTool: Map<string, ToolStat>;
+}
+
+function truncateMessagePartsInternal(messages: MessageItem[]): TruncationResult {
   // Layer 1: Configurable Thresholds from env vars
   const maxToolLines = parseInt(process.env.CC_MAX_TOOL_LINES || "200", 10) || 200;
   const headerLines = parseInt(process.env.CC_TOOL_HEADER_LINES || "20", 10) || 20;
@@ -58,6 +75,16 @@ export function truncateMessageParts(messages: MessageItem[]): number {
   const freshnessThreshold = maxTurn - 1;
 
   let truncations = 0;
+  const perTool = new Map<string, ToolStat>();
+
+  const addStat = (tool: string, originalLines: number, keptLines: number): void => {
+    const existing = perTool.get(tool) ?? { linesBefore: 0, linesAfter: 0, occurrences: 0 };
+    existing.linesBefore += originalLines;
+    existing.linesAfter += keptLines;
+    existing.occurrences += 1;
+    perTool.set(tool, existing);
+  };
+
   for (let msgIdx = 0; msgIdx < messages.length; msgIdx++) {
     const msg = messages[msgIdx];
 
@@ -89,11 +116,42 @@ export function truncateMessageParts(messages: MessageItem[]): number {
             ...lines.slice(-footerLines),
           ].join("\n");
           truncations++;
+          const keptLines = headerLines + footerLines + 1;
+          addStat("text", lines.length, keptLines);
+        }
+      }
+    }
+
+    // Tool-log truncation: opencode stores tool output on ToolPart
+    // ({ type: "tool", tool, state: { status, output } }), NOT on text parts.
+    for (const part of msg.parts) {
+      const st = part.state;
+      if (
+        part.type === "tool" &&
+        st &&
+        st.status === "completed" &&
+        typeof st.output === "string" &&
+        st.output.length > 0
+      ) {
+        const lines = st.output.split("\n");
+        if (lines.length > toolThreshold) {
+          st.output = [
+            ...lines.slice(0, headerLines),
+            `… [${lines.length - headerLines - footerLines} lines truncated] …`,
+            ...lines.slice(-footerLines),
+          ].join("\n");
+          truncations++;
+          const keptLines = headerLines + footerLines + 1;
+          addStat(part.tool ?? "unknown-tool", lines.length, keptLines);
         }
       }
     }
   }
-  return truncations;
+  return { count: truncations, perTool };
+}
+
+export function truncateMessageParts(messages: MessageItem[]): number {
+  return truncateMessagePartsInternal(messages).count;
 }
 
 export function deduplicateMessageParts(messages: MessageItem[]): number {
@@ -132,7 +190,7 @@ function extractSessionId(messages: MessageItem[]): string {
  * Message removal is handled by native session.summarize(), not here.
  * Only skips when no_compact signal is active.
  */
-export function compactMessageHistory(messages: MessageItem[], sessionID?: string): CompactionResult {
+export function compactMessageHistory(messages: MessageItem[], sessionID?: string, agent?: string): CompactionResult {
   const sid = sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default";
   const state = getCompactionState(sid);
   const signal = state.lastSignal;
@@ -157,7 +215,7 @@ export function compactMessageHistory(messages: MessageItem[], sessionID?: strin
   const sessionId = extractSessionId(messages);
 
   // Step 1: Truncate long tool outputs
-  const truncations = truncateMessageParts(messages);
+  const { count: truncations, perTool } = truncateMessagePartsInternal(messages);
 
   // Step 2: Deduplicate repeated outputs
   const duplicates = deduplicateMessageParts(messages);
@@ -184,19 +242,27 @@ export function compactMessageHistory(messages: MessageItem[], sessionID?: strin
     blocksCondensed: truncations + duplicates,
   });
 
-  // Write diary
-  writeDiaryEntry({
-    ts: Date.now(),
-    advice: signal?.advice ?? "triggered",
-    reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
-    blocksCondensed: truncations + duplicates,
-    duplicatesRemoved: duplicates,
-    linesBefore: charsBefore,
-    linesAfter: charsAfter,
-    reductionPct,
-    sessionId,
-    triggered: false,
-  });
+  // Write diary — per-tool attribution so the report can answer
+  // "which tool produced the most pruned lines".
+  for (const [tool, stat] of perTool.entries()) {
+    writeDiaryEntry({
+      ts: Date.now(),
+      advice: signal?.advice ?? "triggered",
+      reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
+      blocksCondensed: stat.occurrences,
+      duplicatesRemoved: 0,
+      linesBefore: stat.linesBefore,
+      linesAfter: stat.linesAfter,
+      reductionPct:
+        stat.linesBefore > 0
+          ? Math.round(((stat.linesBefore - stat.linesAfter) / stat.linesBefore) * 100)
+          : 0,
+      sessionId,
+      triggered: false,
+      agent,
+      tool,
+    });
+  }
 
   logDebugEvent("compaction.applied", {
     messagesBefore,

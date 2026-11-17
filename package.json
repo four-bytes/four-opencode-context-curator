@@ -1,6 +1,6 @@
 {
   "name": "@four-bytes/four-opencode-context-curator",
-  "version": "0.7.12",
+  "version": "0.7.14",
   "description": "opencode Plugin: curates context before LLM requests — changed blocks + N context lines instead of full files",
   "license": "Apache-2.0",
   "type": "module",
@@ -15,8 +15,9 @@
   "scripts": {
     "build": "bun build src/four-opencode-context-curator.ts --outdir dist --target bun --format esm",
     "dev": "bun build src/four-opencode-context-curator.ts --outdir dist --target bun --format esm --watch",
-    "typecheck": "bunx tsc --noEmit",
-    "test": "bun test"
+    "postinstall": "bun run build",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit"
   },
   "keywords": [
     "opencode",
@@ -37,10 +38,10 @@
     ]
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.17.3"
+    "@opencode-ai/plugin": "^1.18.25"
   },
   "devDependencies": {
     "@types/bun": "^1.4.0",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   }
 }

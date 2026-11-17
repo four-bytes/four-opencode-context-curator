@@ -22,6 +22,10 @@ export interface CompactionState {
   compactingActive: boolean;
   turnsSinceCompaction: number;
   instructionSent: boolean;
+  /** Most recently observed agent name (tracked from messages.transform). */
+  lastAgent: string | null;
+  /** Per-turn token estimate history (appended on every setLastTokenEstimate). */
+  tokenHistory: number[];
 }
 
 const sessionStates = new Map<string, CompactionState>();
@@ -39,6 +43,8 @@ function getSessionState(sessionID: string = "default"): CompactionState {
       compactingActive: false,
       turnsSinceCompaction: 0,
       instructionSent: false,
+      lastAgent: null,
+      tokenHistory: [],
     };
     sessionStates.set(sessionID, s);
   }
@@ -92,7 +98,29 @@ export function setLastUserModel(sessionID: string, providerID: string | undefin
 
 
 export function setLastTokenEstimate(sessionID: string, n: number): void {
-  getSessionState(sessionID).lastTokenEstimate = n;
+  const state = getSessionState(sessionID);
+  state.lastTokenEstimate = n;
+  state.tokenHistory.push(n);
+  // Cap history to avoid unbounded growth; trend only needs the last ~10 values.
+  if (state.tokenHistory.length > 1000) {
+    state.tokenHistory = state.tokenHistory.slice(-500);
+  }
+}
+
+/**
+ * Track the most recent agent name observed in messages.transform.
+ * Used by system.transform to resolve per-agent pruning config.
+ */
+export function setLastAgent(sessionID: string, agent: string): void {
+  getSessionState(sessionID).lastAgent = agent;
+}
+
+export function getLastAgent(sessionID: string = "default"): string | null {
+  return getSessionState(sessionID).lastAgent;
+}
+
+export function getTokenHistory(sessionID: string = "default"): number[] {
+  return getSessionState(sessionID).tokenHistory;
 }
 
 const compactionCooldowns = new Map<string, number>();

@@ -18,6 +18,8 @@ export interface PruningConfig {
   minCompletedBlocks: number;
   /** Session ID for session-fenced state (default: env OPENDOC_SESSION_ID or "default") */
   sessionID?: string;
+  /** Agent name for diary attribution (optional). */
+  agent?: string;
 }
 
 export interface PruningStats {
@@ -33,6 +35,8 @@ const DEFAULT_CONFIG: PruningConfig = {
   footerLines: 10,
   minCompletedBlocks: 1,
 };
+
+export { DEFAULT_CONFIG };
 
 /**
  * Truncate a text block if it exceeds maxLines.
@@ -117,6 +121,7 @@ export function condenseIssueSlice(
 export function applyPruning(
   layerContents: string[],
   config: Partial<PruningConfig> = {},
+  tools?: (string | undefined)[],
 ): { contents: string[]; stats: PruningStats } {
   const cfg: PruningConfig = { ...DEFAULT_CONFIG, ...config };
   const sessionID = cfg.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "default";
@@ -198,18 +203,39 @@ export function applyPruning(
         )
       : 0;
 
-  writeDiaryEntry({
+  const baseEntry = {
     ts: Date.now(),
     advice: signal?.advice ?? "triggered",
     reason: signal?.reason ?? "CC_COMPACTION_TRIGGER",
     blocksCondensed: stats.blocksCondensed,
     duplicatesRemoved: stats.duplicatesRemoved,
-    linesBefore: stats.originalLines,
-    linesAfter: stats.prunedLines,
-    reductionPct,
-    sessionId: process.env.OPENDOC_SESSION_ID || "unknown",
+    sessionId: sessionID,
     triggered: false,
-  });
+    agent: cfg.agent,
+  };
+
+  if (tools && tools.length > 0) {
+    // Per-layer attribution: one diary entry per layer source.
+    for (let i = 0; i < layerContents.length; i++) {
+      const before = layerContents[i].split("\n").length;
+      const after = condensed[i] ? condensed[i].split("\n").length : 0;
+      const pct = before > 0 ? Math.round(((before - after) / before) * 100) : 0;
+      writeDiaryEntry({
+        ...baseEntry,
+        linesBefore: before,
+        linesAfter: after,
+        reductionPct: pct,
+        tool: tools[i],
+      });
+    }
+  } else {
+    writeDiaryEntry({
+      ...baseEntry,
+      linesBefore: stats.originalLines,
+      linesAfter: stats.prunedLines,
+      reductionPct,
+    });
+  }
 
   return { contents: condensed, stats };
 }
