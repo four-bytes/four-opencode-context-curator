@@ -26,6 +26,10 @@ export interface CompactionState {
   lastAgent: string | null;
   /** Per-turn token estimate history (appended on every setLastTokenEstimate). */
   tokenHistory: number[];
+  /** ID of the newest user message seen by observeUserTurn(). */
+  lastUserMessageId: string | null;
+  /** Number of user messages in the last observed history (fallback when IDs are absent). */
+  lastUserMessageCount: number;
 }
 
 const sessionStates = new Map<string, CompactionState>();
@@ -45,6 +49,8 @@ function getSessionState(sessionID: string = "default"): CompactionState {
       instructionSent: false,
       lastAgent: null,
       tokenHistory: [],
+      lastUserMessageId: null,
+      lastUserMessageCount: 0,
     };
     sessionStates.set(sessionID, s);
   }
@@ -158,6 +164,40 @@ export function resetTurnsSinceCompaction(sessionID: string = "default"): void {
 
 export function getTurnsSinceCompaction(sessionID: string = "default"): number {
   return getSessionState(sessionID).turnsSinceCompaction;
+}
+
+export interface UserTurnMessage {
+  info?: { role?: string; id?: unknown };
+}
+
+/**
+ * Register a user turn exactly once per user message.
+ *
+ * `experimental.chat.messages.transform` fires multiple times per user turn
+ * (one per tool loop). Counting transform invocations makes both
+ * `turnsSinceCompaction` and the compaction cooldown run several times too
+ * fast. Returns true only when a new user message was observed.
+ */
+export function observeUserTurn(sessionID: string, messages: UserTurnMessage[]): boolean {
+  const state = getSessionState(sessionID);
+  let userCount = 0;
+  let latestUserId: string | null = null;
+
+  for (const msg of messages) {
+    if (msg.info?.role !== "user") continue;
+    userCount++;
+    const id = msg.info.id;
+    if (typeof id === "string" && id.length > 0) latestUserId = id;
+  }
+
+  const isNewTurn =
+    latestUserId !== null && state.lastUserMessageId !== null
+      ? latestUserId !== state.lastUserMessageId
+      : userCount > state.lastUserMessageCount;
+
+  if (latestUserId !== null) state.lastUserMessageId = latestUserId;
+  state.lastUserMessageCount = userCount;
+  return isNewTurn;
 }
 
 export function isInstructionSent(sessionID: string = "default"): boolean {

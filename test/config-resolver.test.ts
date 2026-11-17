@@ -4,6 +4,11 @@ import {
   parsePruningConfig,
   loadPruningConfig,
   PruningConfigResolver,
+  parseCompactionConfig,
+  loadCompactionConfig,
+  CompactionConfigResolver,
+  applyCompactionEnvOverrides,
+  DEFAULT_COMPACTION_CONFIG,
   type PruningConfigMap,
 } from "../src/compaction/config-resolver.js";
 import { DEFAULT_CONFIG } from "../src/compaction/pruning-engine.js";
@@ -137,5 +142,86 @@ describe("PruningConfigResolver.resolve", () => {
     resolver.resolve("mystery");
     resolver.resolve("other-mystery");
     expect(seen).toEqual(["mystery", "other-mystery"]);
+  });
+});
+
+describe("parseCompactionConfig", () => {
+  it("parses context_curator.compaction with per-agent entries", () => {
+    const raw = JSON.stringify({
+      context_curator: {
+        compaction: {
+          default: { autoTokenThreshold: 40000, cooldownTurns: 2 },
+          architect: { autoTurnThreshold: 5 },
+        },
+      },
+    });
+    expect(parseCompactionConfig(raw)).toEqual({
+      default: { autoTokenThreshold: 40000, cooldownTurns: 2 },
+      architect: { autoTurnThreshold: 5 },
+    });
+  });
+
+  it("ignores unknown, non-numeric and negative values", () => {
+    const raw = JSON.stringify({
+      context_curator: {
+        compaction: {
+          default: { autoTokenThreshold: "many", autoTurnThreshold: -1, cooldownTurns: 0, other: 5 },
+        },
+      },
+    });
+    expect(parseCompactionConfig(raw)).toEqual({ default: { cooldownTurns: 0 } });
+  });
+
+  it("returns null when the compaction block is missing", () => {
+    expect(parseCompactionConfig('{"context_curator": {"pruning": {}}}')).toBeNull();
+  });
+});
+
+describe("loadCompactionConfig", () => {
+  it("returns an empty map for missing directory", () => {
+    expect(loadCompactionConfig(undefined)).toEqual({});
+  });
+});
+
+describe("CompactionConfigResolver + env overrides", () => {
+  const resolver = new CompactionConfigResolver({
+    default: { autoTokenThreshold: 40000 },
+    architect: { autoTokenThreshold: 10000, autoTurnThreshold: 2, cooldownTurns: 1 },
+  });
+
+  it("resolves agent → default → built-in defaults", () => {
+    expect(resolver.resolve("architect")).toEqual({
+      ...DEFAULT_COMPACTION_CONFIG,
+      autoTokenThreshold: 10000,
+      autoTurnThreshold: 2,
+      cooldownTurns: 1,
+    });
+    expect(resolver.resolve("unknown")).toEqual({
+      ...DEFAULT_COMPACTION_CONFIG,
+      autoTokenThreshold: 40000,
+    });
+    expect(new CompactionConfigResolver({}).resolve(null)).toEqual(DEFAULT_COMPACTION_CONFIG);
+  });
+
+  it("applies env overrides with highest precedence", () => {
+    const base = resolver.resolve("architect");
+    expect(
+      applyCompactionEnvOverrides(base, {
+        CC_AUTO_TOKEN_THRESHOLD: "12345",
+        CC_AUTO_TURN_THRESHOLD: "7",
+        CC_COMPACTION_COOLDOWN_TURNS: "9",
+      }),
+    ).toEqual({ autoTokenThreshold: 12345, autoTurnThreshold: 7, cooldownTurns: 9 });
+  });
+
+  it("ignores invalid env values", () => {
+    const base = resolver.resolve("architect");
+    expect(
+      applyCompactionEnvOverrides(base, {
+        CC_AUTO_TOKEN_THRESHOLD: "abc",
+        CC_AUTO_TURN_THRESHOLD: "-3",
+        CC_COMPACTION_COOLDOWN_TURNS: "",
+      }),
+    ).toEqual(base);
   });
 });

@@ -6,6 +6,36 @@ export type AgentPruningConfig = Partial<PruningConfig>;
 export type PruningConfigMap = Record<string, AgentPruningConfig>;
 
 /**
+ * Auto-compaction thresholds and cooldown. Resolution order is
+ * agent entry → `default` entry → DEFAULT_COMPACTION_CONFIG, with optional
+ * `CC_AUTO_TOKEN_THRESHOLD` / `CC_AUTO_TURN_THRESHOLD` /
+ * `CC_COMPACTION_COOLDOWN_TURNS` env overrides on top.
+ */
+export interface CompactionConfig {
+  /** Estimated token count above which native compaction may trigger. */
+  autoTokenThreshold: number;
+  /** User turns since the last compaction required before auto-triggering. */
+  autoTurnThreshold: number;
+  /** User turns to wait after a compaction before triggering again. */
+  cooldownTurns: number;
+}
+
+export type AgentCompactionConfig = Partial<CompactionConfig>;
+export type CompactionConfigMap = Record<string, AgentCompactionConfig>;
+
+export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
+  autoTokenThreshold: 50000,
+  autoTurnThreshold: 3,
+  cooldownTurns: 3,
+};
+
+const COMPACTION_NUMERIC_KEYS = [
+  "autoTokenThreshold",
+  "autoTurnThreshold",
+  "cooldownTurns",
+] as const;
+
+/**
  * Strip JSONC comments (// line and /* block) without touching string literals.
  * Keeps everything else intact so JSON.parse can run afterwards.
  */
@@ -165,4 +195,98 @@ export class PruningConfigResolver {
       agent && Object.hasOwn(this.configs, agent) ? this.configs[agent] : this.configs.default;
     return { ...DEFAULT_CONFIG, ...(entry ?? {}) };
   }
+}
+
+function sanitizeCompactionAgentConfig(value: unknown): AgentCompactionConfig | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const obj = value as Record<string, unknown>;
+  const out: AgentCompactionConfig = {};
+  for (const key of COMPACTION_NUMERIC_KEYS) {
+    const v = obj[key];
+    if (typeof v === "number" && Number.isFinite(v) && v >= 0) {
+      out[key] = v;
+    }
+  }
+  return out;
+}
+
+/**
+ * Parse `context_curator.compaction` from a JSONC string into a per-agent map.
+ * Returns null on any failure.
+ */
+export function parseCompactionConfig(raw: string): CompactionConfigMap | null {
+  try {
+    const parsed = JSON.parse(stripJsoncComments(raw)) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const cc = (parsed as Record<string, unknown>).context_curator;
+    if (!cc || typeof cc !== "object" || Array.isArray(cc)) return null;
+    const compaction = (cc as Record<string, unknown>).compaction;
+    if (!compaction || typeof compaction !== "object" || Array.isArray(compaction)) return null;
+
+    const map: CompactionConfigMap = {};
+    for (const [key, value] of Object.entries(compaction as Record<string, unknown>)) {
+      const sanitized = sanitizeCompactionAgentConfig(value);
+      if (sanitized) {
+        map[key] = sanitized;
+      }
+    }
+    return map;
+  } catch {
+    return null;
+  }
+}
+
+/** Load `context_curator.compaction` from opencode.json / opencode.jsonc. Never throws. */
+export function loadCompactionConfig(directory: string | undefined): CompactionConfigMap {
+  if (!directory) return {};
+  const merged: CompactionConfigMap = {};
+  for (const name of ["opencode.json", "opencode.jsonc"]) {
+    let raw: string;
+    try {
+      raw = readFileSync(resolve(directory, name), "utf-8");
+    } catch {
+      continue;
+    }
+    const parsed = parseCompactionConfig(raw);
+    if (parsed) Object.assign(merged, parsed);
+  }
+  return merged;
+}
+
+/** Resolve compaction settings for an agent: agent → default → built-in defaults. */
+export class CompactionConfigResolver {
+  private readonly configs: CompactionConfigMap;
+
+  constructor(configs: CompactionConfigMap) {
+    this.configs = configs;
+  }
+
+  resolve(agent?: string | null): CompactionConfig {
+    const entry =
+      agent && Object.hasOwn(this.configs, agent) ? this.configs[agent] : this.configs.default;
+    return { ...DEFAULT_COMPACTION_CONFIG, ...(entry ?? {}) };
+  }
+}
+
+function envNonNegativeInt(
+  env: Record<string, string | undefined>,
+  name: string,
+  fallback: number,
+): number {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+/** Apply env overrides (highest precedence). Pure — useful in tests. */
+export function applyCompactionEnvOverrides(
+  config: CompactionConfig,
+  env: Record<string, string | undefined> = process.env,
+): CompactionConfig {
+  return {
+    autoTokenThreshold: envNonNegativeInt(env, "CC_AUTO_TOKEN_THRESHOLD", config.autoTokenThreshold),
+    autoTurnThreshold: envNonNegativeInt(env, "CC_AUTO_TURN_THRESHOLD", config.autoTurnThreshold),
+    cooldownTurns: envNonNegativeInt(env, "CC_COMPACTION_COOLDOWN_TURNS", config.cooldownTurns),
+  };
 }

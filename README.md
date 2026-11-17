@@ -55,6 +55,46 @@ Resolution order: **agent entry → `default` entry → built-in defaults**
 (`maxToolLogLines: 50`, `headerLines: 10`, `footerLines: 10`, `minCompletedBlocks: 1`).
 Unknown agent names fall back silently. Non-numeric or negative values are ignored.
 
+### Compaction thresholds and cooldown
+
+Auto-compaction is configured per agent under `context_curator.compaction`:
+
+```jsonc
+{
+  "context_curator": {
+    "compaction": {
+      "default":   { "autoTokenThreshold": 50000, "autoTurnThreshold": 3, "cooldownTurns": 3 },
+      "architect": { "autoTokenThreshold": 35000 }
+    }
+  }
+}
+```
+
+- `autoTokenThreshold` — estimated request tokens above which native compaction may trigger.
+- `autoTurnThreshold` — **user turns** since the last compaction before auto-triggering.
+- `cooldownTurns` — user turns to wait after a compaction before triggering again.
+
+Turns are counted from new user messages, not from `messages.transform` invocations;
+tool loops within one user turn do not advance the counter or the cooldown.
+Environment overrides have the highest precedence:
+`CC_AUTO_TOKEN_THRESHOLD`, `CC_AUTO_TURN_THRESHOLD`, `CC_COMPACTION_COOLDOWN_TURNS`.
+
+### Truncation policy
+
+Assistant prose and tool logs are handled separately:
+
+| Setting | Default | Env override |
+|---|---|---|
+| Tool-log lines | 200 (`task` tool: ×2.5) | `CC_MAX_TOOL_LINES` |
+| Assistant-prose lines | 400 | `CC_MAX_ASSISTANT_LINES` |
+| Header/footer lines kept | 20 / 20 | `CC_TOOL_HEADER_LINES` / `CC_TOOL_FOOTER_LINES` |
+
+User messages are never truncated. Assistant prose that contains instructions,
+decisions, or actionable errors is never truncated. Truncated tool logs keep the
+header and footer plus any critical lines (instructions, decisions, actionable
+errors) from the omitted middle section. Identical repeated tool output (repeat
+reads) is replaced with a reference to its first occurrence.
+
 ## Tools
 
 ### `context_report`
