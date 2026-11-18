@@ -10,6 +10,7 @@ import { parseCompactionSignal, stripCompactionSignal } from "./compaction/signa
 import { applyPruning } from "./compaction/pruning-engine.js";
 import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, extractMessageModel, setLastTokenEstimate, setLastAgent, getLastAgent, getCompactionCooldownRemaining, setCompactionCooldown, setCompactingActive, decrementCompactionCooldown, incrementTurnsSinceCompaction, resetTurnsSinceCompaction, getTurnsSinceCompaction, observeUserTurn, extractMessageSessionId, isInstructionSent, markInstructionSent } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
+import { withTimeout } from "./compaction/timeout.js";
 import { estimateMessageTokens } from "./compaction/tokens.js";
 import { loadPruningConfig, PruningConfigResolver, loadCompactionConfig, CompactionConfigResolver, applyCompactionEnvOverrides, type CompactionConfig } from "./compaction/config-resolver.js";
 import { contextReportTool } from "./compaction/context-report.js";
@@ -135,14 +136,25 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
     // flag that re-entry sees no cooldown and starts a second summarize.
     setCompactingActive(sessionID, true);
     try {
+      // Bound the native summarize call: it hangs in opencode 1.19.6, freezing
+      // the whole session. A timeout turns the hang into a catchable failure so
+      // the current turn can proceed (the plugin's own truncation/dedup still
+      // runs). CC_SUMMARIZE_TIMEOUT_MS=0 disables the timeout.
+      const timeoutRaw = process.env.CC_SUMMARIZE_TIMEOUT_MS;
+      const timeoutMs =
+        timeoutRaw && /^\d+$/.test(timeoutRaw) ? Number(timeoutRaw) : 30_000;
       // Generated SDK signature: summarize(options) — one options object.
       // `throwOnError` belongs INSIDE it; a second argument is silently ignored.
-      await client.session.summarize({
-        path: { id: sessionID },
-        query: { directory: process.cwd() },
-        body: { providerID: userModel.providerID, modelID: userModel.modelID },
-        throwOnError: true,
-      });
+      await withTimeout(
+        client.session.summarize({
+          path: { id: sessionID },
+          query: { directory: process.cwd() },
+          body: { providerID: userModel.providerID, modelID: userModel.modelID },
+          throwOnError: true,
+        }),
+        timeoutMs,
+        `native session.summarize() timed out after ${timeoutMs}ms (opencode 1.19.6 hang)`,
+      );
       setCompactionCooldown(sessionID, cooldownTurns);
       logDebugEvent("compaction.summarize.completed", {
         sessionID,
@@ -150,6 +162,10 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       });
       return true;
     } catch (err) {
+      // A failed or timed-out summarize must not retry-storm: set the cooldown
+      // so the auto-trigger stays quiet for the cooldown window instead of
+      // re-firing on every messages.transform invocation in the same turn.
+      setCompactionCooldown(sessionID, cooldownTurns);
       const msg = `\x1b[31m[four-opencode-context-curator] ❌ compaction request failed (session=${sessionID}): ${String(err)}\x1b[0m`;
       process.stderr.write(msg + "\n");
       logDebugEvent("compaction.summarize.error", {

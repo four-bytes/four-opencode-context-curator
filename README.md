@@ -91,6 +91,11 @@ runs before the guard intervenes.
 Set it before opencode starts. Emergency off-switch only — remove it once the
 native hang is fixed upstream.
 
+`CC_SUMMARIZE_TIMEOUT_MS` (default 30000) bounds each native summarize call, so a
+hang in opencode 1.19.6 degrades to a skipped compaction instead of freezing the
+session. On failure or timeout the compaction cooldown is still set, so the
+trigger does not retry within the same turn. Set it to `0` to disable the timeout.
+
 ### Truncation policy
 
 Assistant prose and tool logs are handled separately:

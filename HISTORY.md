@@ -1,5 +1,11 @@
 # Project Change History
 
+## [0.7.16] - 2026-11-18
+
+### Fixed
+- Native summarize hang / retry storm (#180): `session.summarize()` is now bounded by a configurable timeout (`CC_SUMMARIZE_TIMEOUT_MS`, default 30000) via a new `withTimeout` helper, so the opencode 1.19.6 hang no longer freezes the session.
+- Compaction cooldown is now set on summarize failure as well as success, so a failed or timed-out summarize cannot re-trigger on every `messages.transform` invocation within the same turn.
+
 ## [0.7.15] - 2026-11-17
 
 ### Fixed
