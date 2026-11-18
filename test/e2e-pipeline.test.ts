@@ -3,7 +3,8 @@ import { FourContextCuratorPlugin } from "../src/four-opencode-context-curator";
 import { clearSignal, clearTransformState, getCompactionState, setLastSignal } from "../src/compaction/state";
 
 const mockSummarize = mock().mockResolvedValue(undefined);
-const mockClient = { session: { summarize: mockSummarize } };
+const mockGet = mock().mockResolvedValue({ data: {} });
+const mockClient = { session: { summarize: mockSummarize, get: mockGet } };
 
 let systemTransform: any;
 let messagesTransform: any;
@@ -115,3 +116,90 @@ describe("E2E session.compacting", () => {
 // ============================================================
 // P2c: session.compacting E2E tests will be added here
 // ============================================================
+
+// ============================================================
+// Native compaction must only ever run for the ROOT session.
+// Child/subagent sessions are marked by a non-null `parentID`.
+// ============================================================
+describe("native compaction is root-session only", () => {
+  beforeEach(() => {
+    mockSummarize.mockClear();
+    mockGet.mockClear();
+    mockGet.mockResolvedValue({ data: {} });
+  });
+
+  function compactNowHistory(sid: string) {
+    return [
+      { info: { role: "user", id: "u1", sessionID: sid }, parts: [{ type: "text", text: "go" }] },
+      {
+        info: { role: "assistant", id: "a1", sessionID: sid },
+        parts: [{ type: "text", text: "done\n\ncompaction_advice: compact_now\nreason: done" }],
+      },
+    ];
+  }
+
+  it("skips compact_now for a child (subagent) session", async () => {
+    const sid = "e2e-child-signal";
+    clearSignal(sid);
+    clearTransformState(sid);
+    mockGet.mockResolvedValueOnce({ data: { parentID: "e2e-root" } });
+
+    const output = { messages: compactNowHistory(sid) };
+    await messagesTransform({ sessionID: sid }, output);
+
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(mockGet.mock.calls[0][0]).toEqual({
+      path: { id: sid },
+      query: { directory: process.cwd() },
+    });
+    expect(mockSummarize).not.toHaveBeenCalled();
+    // Signal is still stripped from visible output.
+    expect(output.messages[1].parts[0].text).toBe("done");
+  });
+
+  it("skips the auto-trigger for a child session", async () => {
+    const sid = "e2e-child-auto";
+    clearSignal(sid);
+    clearTransformState(sid);
+    mockGet.mockResolvedValue({ data: { parentID: "e2e-root" } });
+
+    // > 50k estimated tokens (chars/4) and >= 3 turns since compaction.
+    const output = {
+      messages: [
+        { info: { role: "user", id: "u1", sessionID: sid }, parts: [{ type: "text", text: "go" }] },
+        { info: { role: "assistant", id: "a1", sessionID: sid }, parts: [{ type: "text", text: "x".repeat(300_000) }] },
+      ],
+    };
+    await messagesTransform({ sessionID: sid }, output);
+    await messagesTransform({ sessionID: sid }, output);
+    await messagesTransform({ sessionID: sid }, output);
+
+    expect(mockSummarize).not.toHaveBeenCalled();
+  });
+
+  it("still summarizes the root session (no parentID)", async () => {
+    const sid = "e2e-root-signal";
+    clearSignal(sid);
+    clearTransformState(sid);
+    mockGet.mockResolvedValueOnce({ data: { parentID: undefined } });
+
+    await messagesTransform({ sessionID: sid }, { messages: compactNowHistory(sid) });
+
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(mockSummarize).toHaveBeenCalledTimes(1);
+    expect(mockSummarize.mock.calls[0][0].path.id).toBe(sid);
+  });
+
+  it("caches the parent lookup per session", async () => {
+    const sid = "e2e-child-cache";
+    clearSignal(sid);
+    clearTransformState(sid);
+    mockGet.mockResolvedValue({ data: { parentID: "e2e-root" } });
+
+    await messagesTransform({ sessionID: sid }, { messages: compactNowHistory(sid) });
+    await messagesTransform({ sessionID: sid }, { messages: compactNowHistory(sid) });
+
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(mockSummarize).not.toHaveBeenCalled();
+  });
+});

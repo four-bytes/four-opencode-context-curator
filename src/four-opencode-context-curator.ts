@@ -53,11 +53,51 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
     logDebugEvent("pruning.config.unknown_agent", { agent });
   });
 
+  // Child/subagent sessions carry a non-null `parentID` (opencode creates them
+  // with `parentID: context.sessionID`). Native compaction kills the child, so
+  // summarize may only run for the ROOT session. The transform input is `{}`
+  // and message info exposes only `sessionID` (no parent pointer), so we
+  // resolve it once per session via `session.get` and cache the result —
+  // `parentID` never changes for a session.
+  const childSessionCache = new Map<string, boolean>();
+
+  async function isChildSession(realSessionID: string): Promise<boolean> {
+    // No resolvable session id → leave existing (root) behaviour untouched.
+    if (!realSessionID || realSessionID === "unknown" || realSessionID === "default") {
+      return false;
+    }
+    const cached = childSessionCache.get(realSessionID);
+    if (cached !== undefined) return cached;
+    try {
+      const res = await client.session.get({
+        path: { id: realSessionID },
+        query: { directory: process.cwd() },
+      });
+      const parentID = (res as { data?: { parentID?: string | null } }).data?.parentID;
+      const isChild = typeof parentID === "string" && parentID.length > 0;
+      childSessionCache.set(realSessionID, isChild);
+      return isChild;
+    } catch (err) {
+      // Unknown target → preserve existing behaviour rather than block the
+      // root session. Not cached, so a later lookup can still succeed.
+      logDebugEvent("compaction.summarize.parent_lookup_error", {
+        sessionID: realSessionID,
+        error: String(err),
+      });
+      return false;
+    }
+  }
+
   /**
    * Trigger native opencode session compaction (same as /compact slash command).
    * Uses provider/model from the last user message for the summarization agent.
    */
   async function triggerNativeCompaction(realSessionID: string): Promise<void> {
+    // Never compact a child/subagent session — native summarize would kill it.
+    if (await isChildSession(realSessionID)) {
+      logDebugEvent("compaction.summarize.skipped_child", { sessionID: realSessionID });
+      return;
+    }
     const userModel = getCompactionState(realSessionID).lastUserModel;
     logDebugEvent("compaction.summarize.triggered", {
       sessionID: realSessionID,
