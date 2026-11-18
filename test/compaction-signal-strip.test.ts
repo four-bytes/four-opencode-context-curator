@@ -53,4 +53,15 @@ reason: Context growing but still manageable.`;
     expect(result).toBe("Result.");
     expect(result).not.toContain("COMPACTION_ADVICE");
   });
+
+  it("handles a large input without a signal (no catastrophic backtracking)", () => {
+    const text = "line\n".repeat(50_000);
+    expect(stripCompactionSignal(text)).toBe(text);
+  });
+
+  it("strips the signal from a large input", () => {
+    const prefix = "answer\n".repeat(10_000);
+    const text = prefix + "compaction_advice: compact_now\nreason: x";
+    expect(stripCompactionSignal(text)).toBe(prefix.trimEnd());
+  });
 });
