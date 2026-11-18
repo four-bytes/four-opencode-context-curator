@@ -1,9 +1,18 @@
 import { describe, it, expect } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   stripJsoncComments,
+  stripTrailingCommas,
   parsePruningConfig,
   loadPruningConfig,
   PruningConfigResolver,
+  parseCompactionConfig,
+  loadCompactionConfig,
+  CompactionConfigResolver,
+  applyCompactionEnvOverrides,
+  DEFAULT_COMPACTION_CONFIG,
   type PruningConfigMap,
 } from "../src/compaction/config-resolver.js";
 import { DEFAULT_CONFIG } from "../src/compaction/pruning-engine.js";
@@ -137,5 +146,185 @@ describe("PruningConfigResolver.resolve", () => {
     resolver.resolve("mystery");
     resolver.resolve("other-mystery");
     expect(seen).toEqual(["mystery", "other-mystery"]);
+  });
+});
+
+describe("parseCompactionConfig", () => {
+  it("parses context_curator.compaction with per-agent entries", () => {
+    const raw = JSON.stringify({
+      context_curator: {
+        compaction: {
+          default: { autoTokenThreshold: 40000, cooldownTurns: 2 },
+          architect: { autoTurnThreshold: 5 },
+        },
+      },
+    });
+    expect(parseCompactionConfig(raw)).toEqual({
+      default: { autoTokenThreshold: 40000, cooldownTurns: 2 },
+      architect: { autoTurnThreshold: 5 },
+    });
+  });
+
+  it("ignores unknown, non-numeric and negative values", () => {
+    const raw = JSON.stringify({
+      context_curator: {
+        compaction: {
+          default: { autoTokenThreshold: "many", autoTurnThreshold: -1, cooldownTurns: 0, other: 5 },
+        },
+      },
+    });
+    expect(parseCompactionConfig(raw)).toEqual({ default: { cooldownTurns: 0 } });
+  });
+
+  it("returns null when the compaction block is missing", () => {
+    expect(parseCompactionConfig('{"context_curator": {"pruning": {}}}')).toBeNull();
+  });
+
+  it("rejects fractional counts like the env path", () => {
+    const raw = JSON.stringify({
+      context_curator: {
+        compaction: { default: { autoTurnThreshold: 2.5, autoTokenThreshold: 40000 } },
+      },
+    });
+    expect(parseCompactionConfig(raw)).toEqual({ default: { autoTokenThreshold: 40000 } });
+  });
+});
+
+describe("loadCompactionConfig", () => {
+  it("returns an empty map for missing directory", () => {
+    expect(loadCompactionConfig(undefined)).toEqual({});
+  });
+
+  it("merges per-agent keys across opencode.json and opencode.jsonc", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cc-config-"));
+    try {
+      writeFileSync(
+        join(dir, "opencode.json"),
+        JSON.stringify({
+          context_curator: {
+            compaction: {
+              default: { autoTurnThreshold: 2 },
+              architect: { autoTokenThreshold: 10000 },
+            },
+            pruning: { default: { maxToolLogLines: 40 }, architect: { maxToolLogLines: 8 } },
+          },
+        }),
+      );
+      writeFileSync(
+        join(dir, "opencode.jsonc"),
+        `{
+          // Later file wins per key, not per agent entry.
+          "context_curator": {
+            "compaction": { "architect": { "cooldownTurns": 5 } },
+            "pruning": { "architect": { "headerLines": 3 } }
+          }
+        }`,
+      );
+      expect(loadCompactionConfig(dir)).toEqual({
+        default: { autoTurnThreshold: 2 },
+        architect: { autoTokenThreshold: 10000, cooldownTurns: 5 },
+      });
+      expect(loadPruningConfig(dir)).toEqual({
+        default: { maxToolLogLines: 40 },
+        architect: { maxToolLogLines: 8, headerLines: 3 },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("CompactionConfigResolver + env overrides", () => {
+  const resolver = new CompactionConfigResolver({
+    default: { autoTokenThreshold: 40000 },
+    architect: { autoTokenThreshold: 10000, autoTurnThreshold: 2, cooldownTurns: 1 },
+  });
+
+  it("resolves agent → default → built-in defaults", () => {
+    expect(resolver.resolve("architect")).toEqual({
+      ...DEFAULT_COMPACTION_CONFIG,
+      autoTokenThreshold: 10000,
+      autoTurnThreshold: 2,
+      cooldownTurns: 1,
+    });
+    expect(resolver.resolve("unknown")).toEqual({
+      ...DEFAULT_COMPACTION_CONFIG,
+      autoTokenThreshold: 40000,
+    });
+    expect(new CompactionConfigResolver({}).resolve(null)).toEqual(DEFAULT_COMPACTION_CONFIG);
+  });
+
+  it("applies env overrides with highest precedence", () => {
+    const base = resolver.resolve("architect");
+    expect(
+      applyCompactionEnvOverrides(base, {
+        CC_AUTO_TOKEN_THRESHOLD: "12345",
+        CC_AUTO_TURN_THRESHOLD: "7",
+        CC_COMPACTION_COOLDOWN_TURNS: "9",
+      }),
+    ).toEqual({ autoTokenThreshold: 12345, autoTurnThreshold: 7, cooldownTurns: 9 });
+  });
+
+  it("ignores invalid env values", () => {
+    const base = resolver.resolve("architect");
+    expect(
+      applyCompactionEnvOverrides(base, {
+        CC_AUTO_TOKEN_THRESHOLD: "abc",
+        CC_AUTO_TURN_THRESHOLD: "-3",
+        CC_COMPACTION_COOLDOWN_TURNS: "",
+      }),
+    ).toEqual(base);
+  });
+});
+
+describe("JSONC trailing commas", () => {
+  it("keeps commas inside strings", () => {
+    expect(stripTrailingCommas('{"a":"x, }","b":1,}')).toBe('{"a":"x, }","b":1}');
+  });
+
+  it("parses trailing commas in compaction config", () => {
+    const raw = '{ "context_curator": { "compaction": { "default": { "autoTurnThreshold": 5, }, }, }, }';
+    expect(parseCompactionConfig(raw)).toEqual({ default: { autoTurnThreshold: 5 } });
+  });
+
+  it("parses trailing commas in pruning config", () => {
+    const raw = '{ "context_curator": { "pruning": { "default": { "maxToolLogLines": 12, }, }, }, }';
+    expect(parsePruningConfig(raw)).toEqual({ default: { maxToolLogLines: 12 } });
+  });
+});
+
+describe("agent entries inherit the default entry", () => {
+  it("compaction: unset agent keys come from default, not built-ins", () => {
+    const resolver = new CompactionConfigResolver({
+      default: { autoTokenThreshold: 40000, cooldownTurns: 5 },
+      architect: { autoTurnThreshold: 2 },
+    });
+    expect(resolver.resolve("architect")).toEqual({
+      autoTokenThreshold: 40000,
+      autoTurnThreshold: 2,
+      cooldownTurns: 5,
+    });
+  });
+
+  it("pruning: unset agent keys come from default, not built-ins", () => {
+    const resolver = new PruningConfigResolver({
+      default: { maxToolLogLines: 40 },
+      build: { headerLines: 3 },
+    });
+    expect(resolver.resolve("build")).toEqual({
+      ...DEFAULT_CONFIG,
+      maxToolLogLines: 40,
+      headerLines: 3,
+    });
+  });
+
+  it("rejects partially numeric env values", () => {
+    expect(
+      applyCompactionEnvOverrides(DEFAULT_COMPACTION_CONFIG, {
+        CC_AUTO_TURN_THRESHOLD: "3oops",
+        CC_AUTO_TOKEN_THRESHOLD: "12.5",
+        CC_COMPACTION_COOLDOWN_TURNS: " 4",
+      }),
+    ).toEqual(DEFAULT_COMPACTION_CONFIG);
   });
 });

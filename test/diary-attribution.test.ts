@@ -91,7 +91,7 @@ describe("diary attribution", () => {
     removeDiaryFiles(sid);
     process.env.OPENDOC_SESSION_ID = sid;
 
-    const longText = Array.from({ length: 250 }, (_, i) => `txt${i + 1}`).join("\n");
+    const longText = Array.from({ length: 500 }, (_, i) => `txt${i + 1}`).join("\n");
     const messages: MessageItem[] = [
       { info: { role: "user" }, parts: [{ type: "text", text: "q1" }] },
       { info: { role: "assistant" }, parts: [{ type: "text", text: longText }] },

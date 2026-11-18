@@ -1,6 +1,15 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, mock } from "bun:test";
 import { FourContextCuratorPlugin } from "../src/four-opencode-context-curator";
-import { clearSignal, clearTransformState, getCompactionState, setCompactionCooldown, setCompactingActive, setLastSignal } from "../src/compaction/state";
+import {
+  clearSignal,
+  clearTransformState,
+  getCompactionState,
+  setCompactionCooldown,
+  setCompactingActive,
+  setLastSignal,
+  getCompactionCooldownRemaining,
+  getTurnsSinceCompaction,
+} from "../src/compaction/state";
 
 const mockSummarize = mock().mockResolvedValue(undefined);
 const mockGet = mock().mockResolvedValue({ data: {} });
@@ -105,6 +114,121 @@ describe("E2E session.compacting", () => {
   });
 });
 
+describe("messages.transform turn accounting + native compaction", () => {
+  const TURN_ENV = [
+    "CC_AUTO_TOKEN_THRESHOLD",
+    "CC_AUTO_TURN_THRESHOLD",
+    "CC_COMPACTION_COOLDOWN_TURNS",
+  ] as const;
+
+  beforeEach(() => {
+    mockSummarize.mockClear();
+  });
+
+  afterEach(() => {
+    for (const key of TURN_ENV) delete process.env[key];
+    mockSummarize.mockClear();
+  });
+
+  function history(sid: string, userIds: string[], assistantText = "ok") {
+    const messages: any[] = [];
+    for (const id of userIds) {
+      messages.push({ info: { role: "user", id, sessionID: sid }, parts: [{ type: "text", text: "prompt" }] });
+      messages.push({ info: { role: "assistant", id: `a-${id}`, sessionID: sid }, parts: [{ type: "text", text: assistantText }] });
+    }
+    return messages;
+  }
+
+  it("auto-triggers once per user turn, not once per transform invocation", async () => {
+    const sid = "e2e-turn-once";
+    clearSignal(sid);
+    clearTransformState(sid);
+    process.env.CC_AUTO_TOKEN_THRESHOLD = "1";
+    process.env.CC_AUTO_TURN_THRESHOLD = "1";
+    process.env.CC_COMPACTION_COOLDOWN_TURNS = "5";
+
+    const output = { messages: history(sid, ["u1"], "a".repeat(100)) };
+
+    await messagesTransform({ sessionID: sid }, output);
+    expect(mockSummarize).toHaveBeenCalledTimes(1);
+    expect(getCompactionCooldownRemaining(sid)).toBe(5);
+    expect(getTurnsSinceCompaction(sid)).toBe(0); // reset after compaction
+
+    // Same user turn, tool loops → transforms repeat.
+    await messagesTransform({ sessionID: sid }, output);
+    await messagesTransform({ sessionID: sid }, output);
+    expect(mockSummarize).toHaveBeenCalledTimes(1);
+    expect(getCompactionCooldownRemaining(sid)).toBe(5);
+  });
+
+  it("counts tool output when deciding to auto-trigger", async () => {
+    const sid = "e2e-tool-accounting";
+    clearSignal(sid);
+    clearTransformState(sid);
+    process.env.CC_AUTO_TOKEN_THRESHOLD = "10";
+    process.env.CC_AUTO_TURN_THRESHOLD = "1";
+
+    // Prose is tiny; only the 4000-char tool output crosses the token threshold.
+    const output = {
+      messages: [
+        { info: { role: "user", id: "u1", sessionID: sid }, parts: [{ type: "text", text: "go" }] },
+        {
+          info: { role: "assistant", id: "a1", sessionID: sid },
+          parts: [{ type: "tool", tool: "bash", state: { status: "completed", output: "x".repeat(4000) } }],
+        },
+      ],
+    };
+
+    await messagesTransform({ sessionID: sid }, output);
+    expect(mockSummarize).toHaveBeenCalledTimes(1);
+  });
+
+  it("decrements the cooldown only when a new user turn arrives", async () => {
+    const sid = "e2e-turn-cooldown";
+    clearSignal(sid);
+    clearTransformState(sid);
+    process.env.CC_AUTO_TOKEN_THRESHOLD = "999999";
+    setCompactionCooldown(sid, 3);
+
+    await messagesTransform({ sessionID: sid }, { messages: history(sid, ["u1"]) });
+    // First transform is a new user turn: 3 → 2.
+    expect(getCompactionCooldownRemaining(sid)).toBe(2);
+    expect(getTurnsSinceCompaction(sid)).toBe(1);
+
+    // Tool loops within turn 1 must not consume cooldown or turns.
+    await messagesTransform({ sessionID: sid }, { messages: history(sid, ["u1"]) });
+    await messagesTransform({ sessionID: sid }, { messages: history(sid, ["u1"]) });
+    expect(getCompactionCooldownRemaining(sid)).toBe(2);
+    expect(getTurnsSinceCompaction(sid)).toBe(1);
+
+    await messagesTransform({ sessionID: sid }, { messages: history(sid, ["u1", "u2"]) });
+    expect(getCompactionCooldownRemaining(sid)).toBe(1);
+    expect(getTurnsSinceCompaction(sid)).toBe(2);
+
+    await messagesTransform({ sessionID: sid }, { messages: history(sid, ["u1", "u2", "u3"]) });
+    expect(getCompactionCooldownRemaining(sid)).toBe(0);
+    expect(getTurnsSinceCompaction(sid)).toBe(3);
+  });
+
+  it("does not count a shrinking (natively compacted) history as a new turn", async () => {
+    const sid = "e2e-turn-shrink";
+    clearSignal(sid);
+    clearTransformState(sid);
+    process.env.CC_AUTO_TOKEN_THRESHOLD = "999999";
+
+    await messagesTransform({ sessionID: sid }, { messages: history(sid, ["u1", "u2"]) });
+    expect(getTurnsSinceCompaction(sid)).toBe(1);
+
+    // Native compaction summarized u1 away; u2 is still the newest user message.
+    await messagesTransform({ sessionID: sid }, { messages: history(sid, ["u2"]) });
+    expect(getTurnsSinceCompaction(sid)).toBe(1);
+
+    await messagesTransform({ sessionID: sid }, { messages: history(sid, ["u2", "u3"]) });
+    expect(getTurnsSinceCompaction(sid)).toBe(2);
+    expect(mockSummarize).not.toHaveBeenCalled();
+  });
+});
+
 // ============================================================
 // P2a: system.transform E2E tests will be added here
 // ============================================================
@@ -138,6 +262,20 @@ describe("native compaction is root-session only", () => {
     ];
   }
 
+  // Turn accounting advances only on a NEW user message (#164), so three turns
+  // need three distinct user ids — not the same history transformed thrice.
+  function growingTurns(sid: string, count: number) {
+    const messages: any[] = [];
+    for (let i = 1; i <= count; i++) {
+      messages.push({ info: { role: "user", id: `u${i}`, sessionID: sid }, parts: [{ type: "text", text: "go" }] });
+      messages.push({
+        info: { role: "assistant", id: `a${i}`, sessionID: sid },
+        parts: [{ type: "text", text: i === count ? "x".repeat(300_000) : "ok" }],
+      });
+    }
+    return messages;
+  }
+
   it("skips compact_now for a child (subagent) session", async () => {
     const sid = "e2e-child-signal";
     clearSignal(sid);
@@ -164,16 +302,10 @@ describe("native compaction is root-session only", () => {
     clearTransformState(sid);
     mockGet.mockResolvedValue({ data: { parentID: "e2e-root" } });
 
-    // > 50k estimated tokens (chars/4) and >= 3 turns since compaction.
-    const output = {
-      messages: [
-        { info: { role: "user", id: "u1", sessionID: sid }, parts: [{ type: "text", text: "go" }] },
-        { info: { role: "assistant", id: "a1", sessionID: sid }, parts: [{ type: "text", text: "x".repeat(300_000) }] },
-      ],
-    };
-    await messagesTransform({ sessionID: sid }, output);
-    await messagesTransform({ sessionID: sid }, output);
-    await messagesTransform({ sessionID: sid }, output);
+    // > 50k estimated tokens (chars/4) and >= 3 distinct turns since compaction.
+    await messagesTransform({ sessionID: sid }, { messages: growingTurns(sid, 1) });
+    await messagesTransform({ sessionID: sid }, { messages: growingTurns(sid, 2) });
+    await messagesTransform({ sessionID: sid }, { messages: growingTurns(sid, 3) });
 
     expect(mockSummarize).not.toHaveBeenCalled();
   });
@@ -184,15 +316,9 @@ describe("native compaction is root-session only", () => {
     clearTransformState(sid);
     mockGet.mockResolvedValue({ data: { parentID: undefined } });
 
-    const output = {
-      messages: [
-        { info: { role: "user", id: "u1", sessionID: sid }, parts: [{ type: "text", text: "go" }] },
-        { info: { role: "assistant", id: "a1", sessionID: sid }, parts: [{ type: "text", text: "x".repeat(300_000) }] },
-      ],
-    };
-    await messagesTransform({ sessionID: sid }, output);
-    await messagesTransform({ sessionID: sid }, output);
-    await messagesTransform({ sessionID: sid }, output);
+    await messagesTransform({ sessionID: sid }, { messages: growingTurns(sid, 1) });
+    await messagesTransform({ sessionID: sid }, { messages: growingTurns(sid, 2) });
+    await messagesTransform({ sessionID: sid }, { messages: growingTurns(sid, 3) });
 
     expect(mockGet).toHaveBeenCalledTimes(1);
     expect(mockSummarize).toHaveBeenCalledTimes(1);
