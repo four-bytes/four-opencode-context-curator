@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, mock } from "bun:test";
 import { FourContextCuratorPlugin } from "../src/four-opencode-context-curator";
-import { clearSignal, clearTransformState, getCompactionState, setCompactionCooldown, setLastSignal } from "../src/compaction/state";
+import { clearSignal, clearTransformState, getCompactionState, setCompactionCooldown, setCompactingActive, setLastSignal } from "../src/compaction/state";
 
 const mockSummarize = mock().mockResolvedValue(undefined);
 const mockGet = mock().mockResolvedValue({ data: {} });
@@ -210,6 +210,9 @@ describe("native compaction is root-session only", () => {
     expect(mockGet).toHaveBeenCalledTimes(1);
     expect(mockSummarize).toHaveBeenCalledTimes(1);
     expect(mockSummarize.mock.calls[0][0].path.id).toBe(sid);
+    // Generated v1 SDK signature: summarize(options) — one object, no second arg.
+    expect(mockSummarize.mock.calls[0]).toHaveLength(1);
+    expect(mockSummarize.mock.calls[0][0].throwOnError).toBe(true);
   });
 
   it("caches the parent lookup per session", async () => {
@@ -245,5 +248,84 @@ describe("native compaction is root-session only", () => {
 
     expect(mockGet).toHaveBeenCalledTimes(2);
     expect(mockSummarize).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ============================================================
+// Re-entrancy: the summarizer's own request passes through
+// messages.transform while summarize is still pending. A second
+// trigger there is the reported /compact deadlock (#168).
+// ============================================================
+describe("compaction re-entrancy guard", () => {
+  beforeEach(() => {
+    mockSummarize.mockReset();
+    mockSummarize.mockResolvedValue(undefined);
+    mockGet.mockClear();
+    mockGet.mockResolvedValue({ data: {} });
+  });
+
+  function compactNowHistory(sid: string) {
+    return [
+      { info: { role: "user", id: "u1", sessionID: sid }, parts: [{ type: "text", text: "go" }] },
+      {
+        info: { role: "assistant", id: "a1", sessionID: sid },
+        parts: [{ type: "text", text: "done\n\ncompaction_advice: compact_now\nreason: done" }],
+      },
+    ];
+  }
+
+  function hugeHistory(sid: string) {
+    return [
+      { info: { role: "user", id: "u1", sessionID: sid }, parts: [{ type: "text", text: "go" }] },
+      {
+        info: { role: "assistant", id: "a1", sessionID: sid },
+        parts: [{ type: "text", text: "x".repeat(300_000) }],
+      },
+    ];
+  }
+
+  it("skips a second compact_now while the first summarize is in flight", async () => {
+    const sid = "e2e-reentrancy-compact-now";
+    clearSignal(sid);
+    clearTransformState(sid);
+    setCompactionCooldown(sid, 0);
+    setCompactingActive(sid, false);
+
+    let release!: () => void;
+    const inFlight = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockSummarize.mockImplementationOnce(() => inFlight);
+
+    const first = messagesTransform({ sessionID: sid }, { messages: compactNowHistory(sid) });
+    // Flush the async parent lookup so summarize is actually pending.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(mockSummarize).toHaveBeenCalledTimes(1);
+    expect(getCompactionState(sid).compactingActive).toBe(true);
+
+    // The summarizer's own request re-enters the transform here.
+    await messagesTransform({ sessionID: sid }, { messages: compactNowHistory(sid) });
+    expect(mockSummarize).toHaveBeenCalledTimes(1);
+
+    release();
+    await first;
+    expect(getCompactionState(sid).compactingActive).toBe(false);
+  });
+
+  it("skips the auto-trigger while compactingActive is true", async () => {
+    const sid = "e2e-reentrancy-auto";
+    clearSignal(sid);
+    clearTransformState(sid);
+    setCompactionCooldown(sid, 0);
+    setCompactingActive(sid, true);
+
+    const output = { messages: hugeHistory(sid) };
+    await messagesTransform({ sessionID: sid }, output);
+    await messagesTransform({ sessionID: sid }, output);
+    await messagesTransform({ sessionID: sid }, output);
+
+    expect(mockSummarize).not.toHaveBeenCalled();
+    setCompactingActive(sid, false);
   });
 });
