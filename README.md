@@ -63,7 +63,7 @@ Auto-compaction is configured per agent under `context_curator.compaction`:
 {
   "context_curator": {
     "compaction": {
-      "default":   { "autoTokenThreshold": 50000, "autoTurnThreshold": 3, "cooldownTurns": 3 },
+      "default":   { "autoTokenThreshold": 25000, "autoTurnThreshold": 3, "cooldownTurns": 3 },
       "architect": { "autoTokenThreshold": 35000 }
     }
   }
