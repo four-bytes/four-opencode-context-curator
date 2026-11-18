@@ -55,6 +55,15 @@ export function getCompactionState(sessionID: string = "default"): CompactionSta
   return getSessionState(sessionID);
 }
 
+/**
+ * Mark whether a native summarize is currently in flight for this session.
+ * Reads of this flag gate every auto-trigger so the summarizer's own request
+ * cannot re-enter messages.transform and start a second summarize.
+ */
+export function setCompactingActive(sessionID: string, active: boolean): void {
+  getSessionState(sessionID).compactingActive = active;
+}
+
 export function setLastSignal(sessionID: string, signal: CompactionSignal): void {
   getSessionState(sessionID).lastSignal = signal;
 }

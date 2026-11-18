@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { clearSignal, getCompactionState, setLastSignal, incrementTurnsSinceCompaction, resetTurnsSinceCompaction, getTurnsSinceCompaction, isInstructionSent, markInstructionSent } from "../src/compaction/state.js";
+import { clearSignal, getCompactionState, setLastSignal, setCompactingActive, incrementTurnsSinceCompaction, resetTurnsSinceCompaction, getTurnsSinceCompaction, isInstructionSent, markInstructionSent } from "../src/compaction/state.js";
 
 describe("setLastSignal / getCompactionState / clearSignal", () => {
   afterEach(() => {
@@ -55,6 +55,24 @@ describe("turnsSinceCompaction", () => {
     incrementTurnsSinceCompaction("turns-test");
     resetTurnsSinceCompaction("turns-test");
     expect(getTurnsSinceCompaction("turns-test")).toBe(0);
+  });
+});
+
+describe("compactingActive", () => {
+  it("starts as false", () => {
+    expect(getCompactionState("active-test").compactingActive).toBe(false);
+  });
+  it("can be set and reset", () => {
+    setCompactingActive("active-test", true);
+    expect(getCompactionState("active-test").compactingActive).toBe(true);
+    setCompactingActive("active-test", false);
+    expect(getCompactionState("active-test").compactingActive).toBe(false);
+  });
+  it("is tracked per session", () => {
+    setCompactingActive("active-a", true);
+    expect(getCompactionState("active-a").compactingActive).toBe(true);
+    expect(getCompactionState("active-b").compactingActive).toBe(false);
+    setCompactingActive("active-a", false);
   });
 });
 

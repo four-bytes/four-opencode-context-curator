@@ -8,7 +8,7 @@ import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
 import { parseCompactionSignal, stripCompactionSignal } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
-import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, setLastTokenEstimate, setLastAgent, getLastAgent, getCompactionCooldownRemaining, setCompactionCooldown, decrementCompactionCooldown, incrementTurnsSinceCompaction, resetTurnsSinceCompaction, getTurnsSinceCompaction, isInstructionSent, markInstructionSent } from "./compaction/state.js";
+import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, setLastTokenEstimate, setLastAgent, getLastAgent, getCompactionCooldownRemaining, setCompactionCooldown, setCompactingActive, decrementCompactionCooldown, incrementTurnsSinceCompaction, resetTurnsSinceCompaction, getTurnsSinceCompaction, isInstructionSent, markInstructionSent } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
 import { estimateMessageTokens } from "./compaction/tokens.js";
 import { loadPruningConfig, PruningConfigResolver } from "./compaction/config-resolver.js";
@@ -109,18 +109,23 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       providerID: userModel.providerID,
       modelID: userModel.modelID,
     });
+    // Set BEFORE the request: the summarizer's own LLM request re-enters
+    // messages.transform while this promise is still pending. Without this
+    // flag that re-entry sees no cooldown and starts a second summarize.
+    setCompactingActive(realSessionID, true);
     try {
-      await (client.session.summarize as any)(
-        {
-          path: { id: realSessionID },
-          query: { directory: process.cwd() },
-          body: {
-            ...(userModel.providerID ? { providerID: userModel.providerID } : {}),
-            ...(userModel.modelID ? { modelID: userModel.modelID } : {}),
-          },
-        },
-        { throwOnError: true },
-      );
+      // Generated SDK signature: summarize(options) — one options object.
+      // `throwOnError` belongs INSIDE it; a second argument is silently ignored.
+      const body =
+        userModel.providerID && userModel.modelID
+          ? { providerID: userModel.providerID, modelID: userModel.modelID }
+          : undefined;
+      await client.session.summarize({
+        path: { id: realSessionID },
+        query: { directory: process.cwd() },
+        body,
+        throwOnError: true,
+      });
       setCompactionCooldown(realSessionID, 3);
       logDebugEvent("compaction.summarize.completed", {
         sessionID: realSessionID,
@@ -133,7 +138,24 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         error: String(err),
         sessionID: realSessionID,
       });
+    } finally {
+      setCompactingActive(realSessionID, false);
     }
+  }
+
+  /**
+   * A trigger is blocked while a summarize is in flight or the cooldown runs.
+   * The transform input's session id may be "default"/"unknown" (opencode
+   * passes an empty input object), while state is keyed by the real session id
+   * taken from the messages — so both keys must be checked.
+   */
+  function isCompactionBlocked(stateKey: string, realSessionID: string): boolean {
+    return (
+      getCompactionState(stateKey).compactingActive ||
+      getCompactionState(realSessionID).compactingActive ||
+      getCompactionCooldownRemaining(stateKey) > 0 ||
+      getCompactionCooldownRemaining(realSessionID) > 0
+    );
   }
 
   return {
@@ -272,16 +294,20 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
               // Extract sessionID from messages (every message carries session's ID)
               const signalMsg = msgs.find(m => m.info?.sessionID);
               const realSessionID = signalMsg?.info?.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "unknown";
-              const inCooldown = (getCompactionState(sessionID).compactingActive) ||
-                ((getCompactionCooldownRemaining(sessionID) > 0));
+              const inCooldown = isCompactionBlocked(sessionID, realSessionID);
               if (signal.advice === "compact_now" && !inCooldown) {
                 await triggerNativeCompaction(realSessionID);
                 clearSignal(sessionID); // skip plugin compaction — native summarize handles it
               } else if (signal.advice === "compact_now" && inCooldown) {
                 logDebugEvent("compaction.summarize.cooldown_skipped", {
                   sessionID: realSessionID,
-                  cooldownRemaining: getCompactionCooldownRemaining(sessionID),
-                  compactingActive: getCompactionState(sessionID).compactingActive,
+                  cooldownRemaining: Math.max(
+                    getCompactionCooldownRemaining(sessionID),
+                    getCompactionCooldownRemaining(realSessionID),
+                  ),
+                  compactingActive:
+                    getCompactionState(sessionID).compactingActive ||
+                    getCompactionState(realSessionID).compactingActive,
                 });
                 clearSignal(sessionID); // still clear to avoid plugin compaction
               }
@@ -316,11 +342,11 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         const AUTO_TOKEN_THRESHOLD = 50000;
         const AUTO_TURN_THRESHOLD = 3;
         const turnsSince = getTurnsSinceCompaction(sessionID);
-        const inCooldown = getCompactionState(sessionID).compactingActive || (getCompactionCooldownRemaining(sessionID) > 0);
+        const signalMsg2 = msgs.find(m => m.info?.sessionID);
+        const realSid2 = signalMsg2?.info?.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "unknown";
+        const inCooldown = isCompactionBlocked(sessionID, realSid2);
 
         if (totalTokens > AUTO_TOKEN_THRESHOLD && turnsSince >= AUTO_TURN_THRESHOLD && !inCooldown) {
-          const signalMsg2 = msgs.find(m => m.info?.sessionID);
-          const realSid2 = signalMsg2?.info?.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "unknown";
           logDebugEvent("compaction.auto_trigger", { totalTokens, turnsSince, sessionID: realSid2 });
           await triggerNativeCompaction(realSid2);
           resetTurnsSinceCompaction(sessionID);
