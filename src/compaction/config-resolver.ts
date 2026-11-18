@@ -101,6 +101,54 @@ export function stripJsoncComments(text: string): string {
 }
 
 /**
+ * Remove trailing commas before `}` / `]` (valid JSONC, invalid JSON) without
+ * touching string literals. Comments must already be stripped.
+ */
+export function stripTrailingCommas(text: string): string {
+  let result = "";
+  let i = 0;
+  let inString = false;
+
+  while (i < text.length) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === "\\") {
+        result += ch + (text[i + 1] ?? "");
+        i += 2;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      result += ch;
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      result += ch;
+      i++;
+      continue;
+    }
+    if (ch === ",") {
+      let j = i + 1;
+      while (j < text.length && /\s/.test(text[j])) j++;
+      const nextCh = text[j];
+      if (nextCh === "}" || nextCh === "]") {
+        i++; // drop the trailing comma
+        continue;
+      }
+    }
+    result += ch;
+    i++;
+  }
+  return result;
+}
+
+/** JSONC cleanup shared by both config parsers: comments, then trailing commas. */
+function parseJsonc(text: string): unknown {
+  return JSON.parse(stripTrailingCommas(stripJsoncComments(text))) as unknown;
+}
+
+/**
  * Numeric pruning fields that may come from JSON. Non-numeric / negative values
  * are silently ignored so they can never produce NaN truncation at runtime.
  */
@@ -125,7 +173,7 @@ function sanitizeAgentConfig(value: unknown): AgentPruningConfig | null {
  */
 export function parsePruningConfig(raw: string): PruningConfigMap | null {
   try {
-    const parsed = JSON.parse(stripJsoncComments(raw)) as unknown;
+    const parsed = parseJsonc(raw);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const cc = (parsed as Record<string, unknown>).context_curator;
     if (!cc || typeof cc !== "object" || Array.isArray(cc)) return null;
@@ -193,7 +241,10 @@ export class PruningConfigResolver {
 
     const entry =
       agent && Object.hasOwn(this.configs, agent) ? this.configs[agent] : this.configs.default;
-    return { ...DEFAULT_CONFIG, ...(entry ?? {}) };
+    // Agent entry is partial: unset keys fall back to `default`, not to the
+    // built-in constants, so a `default` override is inherited by every agent.
+    const fallback = this.configs.default ?? {};
+    return { ...DEFAULT_CONFIG, ...fallback, ...(entry ?? {}) };
   }
 }
 
@@ -216,7 +267,7 @@ function sanitizeCompactionAgentConfig(value: unknown): AgentCompactionConfig | 
  */
 export function parseCompactionConfig(raw: string): CompactionConfigMap | null {
   try {
-    const parsed = JSON.parse(stripJsoncComments(raw)) as unknown;
+    const parsed = parseJsonc(raw);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const cc = (parsed as Record<string, unknown>).context_curator;
     if (!cc || typeof cc !== "object" || Array.isArray(cc)) return null;
@@ -262,9 +313,12 @@ export class CompactionConfigResolver {
   }
 
   resolve(agent?: string | null): CompactionConfig {
+    const fallback = this.configs.default ?? {};
     const entry =
-      agent && Object.hasOwn(this.configs, agent) ? this.configs[agent] : this.configs.default;
-    return { ...DEFAULT_COMPACTION_CONFIG, ...(entry ?? {}) };
+      agent && Object.hasOwn(this.configs, agent) ? this.configs[agent] : undefined;
+    // Agent entries are partial: unset keys inherit the `default` entry, which
+    // in turn inherits DEFAULT_COMPACTION_CONFIG — not the built-in constants.
+    return { ...DEFAULT_COMPACTION_CONFIG, ...fallback, ...(entry ?? {}) };
   }
 }
 
@@ -275,8 +329,11 @@ function envNonNegativeInt(
 ): number {
   const raw = env[name];
   if (raw === undefined || raw === "") return fallback;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+  // Reject partial parses ("3oops" -> 3) and signs/whitespace: only a string
+  // made of digits entirely is accepted.
+  if (!/^\d+$/.test(raw)) return fallback;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 /** Apply env overrides (highest precedence). Pure — useful in tests. */

@@ -283,6 +283,9 @@ export function truncateMessageParts(messages: MessageItem[]): number {
 
 function dedupeCandidate(part: Part): string | null {
   if (part.type === "text" && part.text && part.text.length > 20) {
+    // Assistant prose carrying instructions/decisions is never replaced by a
+    // pointer — the same protection applies as in truncation.
+    if (isProtectedAssistantProse(part.text)) return null;
     return part.text;
   }
   // Repeat reads: identical completed tool output is referenced, not repeated.

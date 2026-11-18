@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import {
   stripJsoncComments,
+  stripTrailingCommas,
   parsePruningConfig,
   loadPruningConfig,
   PruningConfigResolver,
@@ -223,5 +224,57 @@ describe("CompactionConfigResolver + env overrides", () => {
         CC_COMPACTION_COOLDOWN_TURNS: "",
       }),
     ).toEqual(base);
+  });
+});
+
+describe("JSONC trailing commas", () => {
+  it("keeps commas inside strings", () => {
+    expect(stripTrailingCommas('{"a":"x, }","b":1,}')).toBe('{"a":"x, }","b":1}');
+  });
+
+  it("parses trailing commas in compaction config", () => {
+    const raw = '{ "context_curator": { "compaction": { "default": { "autoTurnThreshold": 5, }, }, }, }';
+    expect(parseCompactionConfig(raw)).toEqual({ default: { autoTurnThreshold: 5 } });
+  });
+
+  it("parses trailing commas in pruning config", () => {
+    const raw = '{ "context_curator": { "pruning": { "default": { "maxToolLogLines": 12, }, }, }, }';
+    expect(parsePruningConfig(raw)).toEqual({ default: { maxToolLogLines: 12 } });
+  });
+});
+
+describe("agent entries inherit the default entry", () => {
+  it("compaction: unset agent keys come from default, not built-ins", () => {
+    const resolver = new CompactionConfigResolver({
+      default: { autoTokenThreshold: 40000, cooldownTurns: 5 },
+      architect: { autoTurnThreshold: 2 },
+    });
+    expect(resolver.resolve("architect")).toEqual({
+      autoTokenThreshold: 40000,
+      autoTurnThreshold: 2,
+      cooldownTurns: 5,
+    });
+  });
+
+  it("pruning: unset agent keys come from default, not built-ins", () => {
+    const resolver = new PruningConfigResolver({
+      default: { maxToolLogLines: 40 },
+      build: { headerLines: 3 },
+    });
+    expect(resolver.resolve("build")).toEqual({
+      ...DEFAULT_CONFIG,
+      maxToolLogLines: 40,
+      headerLines: 3,
+    });
+  });
+
+  it("rejects partially numeric env values", () => {
+    expect(
+      applyCompactionEnvOverrides(DEFAULT_COMPACTION_CONFIG, {
+        CC_AUTO_TURN_THRESHOLD: "3oops",
+        CC_AUTO_TOKEN_THRESHOLD: "12.5",
+        CC_COMPACTION_COOLDOWN_TURNS: " 4",
+      }),
+    ).toEqual(DEFAULT_COMPACTION_CONFIG);
   });
 });

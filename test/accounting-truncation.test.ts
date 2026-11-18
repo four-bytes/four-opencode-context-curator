@@ -149,3 +149,52 @@ describe("observeUserTurn", () => {
     expect(observeUserTurn("turn-test-c", [{ info: { role: "assistant" } }])).toBe(false);
   });
 });
+
+describe("dedup respects protected assistant prose", () => {
+  it("never replaces repeated protected assistant text with a pointer", () => {
+    const prose = "You must not re-run the migration before the backup completes.";
+    const messages: MessageItem[] = [
+      msg("assistant", [text(prose)]),
+      msg("assistant", [text(prose)]),
+    ];
+    expect(deduplicateMessageParts(messages)).toBe(0);
+    expect(messages[1].parts[0].text).toBe(prose);
+  });
+
+  it("still collapses repeated ordinary assistant text", () => {
+    const plain = "Here is a plain summary of the changes applied so far.";
+    const messages: MessageItem[] = [
+      msg("assistant", [text(plain)]),
+      msg("assistant", [text(plain)]),
+    ];
+    expect(deduplicateMessageParts(messages)).toBe(1);
+    expect(messages[1].parts[0].text).toContain("\u2191 see above (message 1)");
+  });
+});
+
+describe("observeUserTurn per-agent tracking", () => {
+  const turn = (id: string) => ({ info: { role: "user", id } });
+  const noId = { info: { role: "user" } };
+
+  it("clears a stale id when the newest user message has no id", () => {
+    const sid = "turn-test-stale";
+    expect(observeUserTurn(sid, [turn("u1")])).toBe(true);
+    // Newest user message carries no ID: the old u1 must not be reused.
+    expect(observeUserTurn(sid, [turn("u1"), noId])).toBe(true);
+    expect(observeUserTurn(sid, [turn("u1"), noId])).toBe(false);
+  });
+
+  it("keeps parent and subagent turns apart", () => {
+    const sid = "turn-test-agents";
+    expect(observeUserTurn(sid, [turn("p1")], "parent")).toBe(true);
+    expect(observeUserTurn(sid, [turn("s1")], "subagent")).toBe(true);
+    // The parent transform in the same turn must not count again just because
+    // the subagent ran in between and advanced the shared tracker.
+    expect(observeUserTurn(sid, [turn("p1")], "parent")).toBe(false);
+    expect(observeUserTurn(sid, [turn("s1")], "subagent")).toBe(false);
+
+    const sidNoIds = "turn-test-agents-noids";
+    expect(observeUserTurn(sidNoIds, [noId], "parent")).toBe(true);
+    expect(observeUserTurn(sidNoIds, [noId], "subagent")).toBe(true);
+  });
+});

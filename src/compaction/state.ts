@@ -26,7 +26,15 @@ export interface CompactionState {
   lastAgent: string | null;
   /** Per-turn token estimate history (appended on every setLastTokenEstimate). */
   tokenHistory: number[];
-  /** ID of the newest user message seen by observeUserTurn(). */
+  /**
+   * Per-agent user-turn trackers. Keyed by agent name so parent and subagent
+   * turns cannot advance each other's cooldown when messages interleave.
+   */
+  userTurnsByAgent: Map<string, UserTurnTracker>;
+}
+
+export interface UserTurnTracker {
+  /** ID of the newest user message seen for this agent, null when it carried no ID. */
   lastUserMessageId: string | null;
   /** Number of user messages in the last observed history (fallback when IDs are absent). */
   lastUserMessageCount: number;
@@ -49,8 +57,7 @@ function getSessionState(sessionID: string = "default"): CompactionState {
       instructionSent: false,
       lastAgent: null,
       tokenHistory: [],
-      lastUserMessageId: null,
-      lastUserMessageCount: 0,
+      userTurnsByAgent: new Map(),
     };
     sessionStates.set(sessionID, s);
   }
@@ -178,25 +185,46 @@ export interface UserTurnMessage {
  * `turnsSinceCompaction` and the compaction cooldown run several times too
  * fast. Returns true only when a new user message was observed.
  */
-export function observeUserTurn(sessionID: string, messages: UserTurnMessage[]): boolean {
-  const state = getSessionState(sessionID);
-  let userCount = 0;
-  let latestUserId: string | null = null;
+const USER_TURN_KEY_NO_AGENT = "\u0000none";
 
+export function observeUserTurn(
+  sessionID: string,
+  messages: UserTurnMessage[],
+  agent?: string | null,
+): boolean {
+  const state = getSessionState(sessionID);
+  const agentKey = agent && agent.length > 0 ? agent : USER_TURN_KEY_NO_AGENT;
+  let tracker = state.userTurnsByAgent.get(agentKey);
+  if (!tracker) {
+    tracker = { lastUserMessageId: null, lastUserMessageCount: 0 };
+    state.userTurnsByAgent.set(agentKey, tracker);
+  }
+
+  let userCount = 0;
   for (const msg of messages) {
     if (msg.info?.role !== "user") continue;
     userCount++;
-    const id = msg.info.id;
-    if (typeof id === "string" && id.length > 0) latestUserId = id;
+  }
+
+  // Only the NEWEST user message identifies the turn. An older ID must never
+  // linger: if the newest user message carries no ID, clear the tracker and
+  // fall back to counting instead of comparing against a stale ID.
+  let newestUserId: string | null = null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const info = messages[i].info;
+    if (info?.role !== "user") continue;
+    const id = info.id;
+    if (typeof id === "string" && id.length > 0) newestUserId = id;
+    break;
   }
 
   const isNewTurn =
-    latestUserId !== null && state.lastUserMessageId !== null
-      ? latestUserId !== state.lastUserMessageId
-      : userCount > state.lastUserMessageCount;
+    newestUserId !== null && tracker.lastUserMessageId !== null
+      ? newestUserId !== tracker.lastUserMessageId
+      : userCount > tracker.lastUserMessageCount;
 
-  if (latestUserId !== null) state.lastUserMessageId = latestUserId;
-  state.lastUserMessageCount = userCount;
+  tracker.lastUserMessageId = newestUserId;
+  tracker.lastUserMessageCount = userCount;
   return isNewTurn;
 }
 

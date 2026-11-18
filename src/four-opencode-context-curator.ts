@@ -95,18 +95,20 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
   }
 
   /**
-   * Trigger native opencode session compaction (same as /compact slash command).
+   * Trigger opencode's native session compaction (same as /compact slash command).
    * Uses provider/model from the last user message for the summarization agent.
+   * @returns true only when the summarize call succeeded — callers must not
+   * reset accounting state on failure.
    */
   async function triggerNativeCompaction(
     realSessionID: string,
     stateSessionID: string,
     cooldownTurns: number,
-  ): Promise<void> {
+  ): Promise<boolean> {
     // Never compact a child/subagent session — native summarize would kill it.
     if (await isChildSession(realSessionID)) {
       logDebugEvent("compaction.summarize.skipped_child", { sessionID: realSessionID });
-      return;
+      return false;
     }
     // Provider/model and cooldown use the plugin's state key (messages.transform
     // receives an empty input object, so state is keyed independently of the
@@ -142,6 +144,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         stateSessionID,
         cooldown: cooldownTurns,
       });
+      return true;
     } catch (err) {
       const msg = `\x1b[31m[four-opencode-context-curator] ❌ compaction request failed (session=${realSessionID}): ${String(err)}\x1b[0m`;
       process.stderr.write(msg + "\n");
@@ -149,6 +152,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         error: String(err),
         sessionID: realSessionID,
       });
+      return false;
     } finally {
       setCompactingActive(realSessionID, false);
     }
@@ -242,13 +246,16 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         }>;
 
         // Compaction thresholds/cooldown: agent config → default → env overrides.
+        const activeAgent = lastAgent ?? getLastAgent(sessionID);
         const compactionSettings: CompactionConfig = applyCompactionEnvOverrides(
-          compactionConfigResolver.resolve(lastAgent ?? getLastAgent(sessionID)),
+          compactionConfigResolver.resolve(activeAgent),
         );
 
         // messages.transform runs multiple times per user turn (tool loops).
         // Only a new user message advances the turn counter and the cooldown.
-        if (observeUserTurn(sessionID, msgs)) {
+        // Tracking is per agent, so parent/subagent interleaving cannot advance
+        // the other agent's cooldown.
+        if (observeUserTurn(sessionID, msgs, activeAgent)) {
           decrementCompactionCooldown(sessionID);
           incrementTurnsSinceCompaction(sessionID);
         }
@@ -320,8 +327,12 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
               const realSessionID = signalMsg?.info?.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "unknown";
               const inCooldown = isCompactionBlocked(sessionID, realSessionID);
               if (signal.advice === "compact_now" && !inCooldown) {
-                await triggerNativeCompaction(realSessionID, sessionID, compactionSettings.cooldownTurns);
-                resetTurnsSinceCompaction(sessionID);
+                const compacted = await triggerNativeCompaction(
+                  realSessionID,
+                  sessionID,
+                  compactionSettings.cooldownTurns,
+                );
+                if (compacted) resetTurnsSinceCompaction(sessionID);
                 clearSignal(sessionID); // skip plugin compaction — native summarize handles it
               } else if (signal.advice === "compact_now" && inCooldown) {
                 logDebugEvent("compaction.summarize.cooldown_skipped", {
@@ -377,8 +388,12 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
             autoTurnThreshold: compactionSettings.autoTurnThreshold,
             sessionID: realSid2,
           });
-          await triggerNativeCompaction(realSid2, sessionID, compactionSettings.cooldownTurns);
-          resetTurnsSinceCompaction(sessionID);
+          const compacted = await triggerNativeCompaction(
+            realSid2,
+            sessionID,
+            compactionSettings.cooldownTurns,
+          );
+          if (compacted) resetTurnsSinceCompaction(sessionID);
         }
 
         // Strip compaction_signal from visible output
