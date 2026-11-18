@@ -24,7 +24,10 @@ export type AgentCompactionConfig = Partial<CompactionConfig>;
 export type CompactionConfigMap = Record<string, AgentCompactionConfig>;
 
 export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
-  autoTokenThreshold: 50000,
+  // 25000: fire auto-compaction BEFORE token-budget-guard's `max_start_tokens`
+  // policy (default 25000) or the provider's context limit reject the prompt.
+  // `max_start_tokens` stays as the safety net if compaction ever fails.
+  autoTokenThreshold: 25000,
   autoTurnThreshold: 3,
   cooldownTurns: 3,
 };
