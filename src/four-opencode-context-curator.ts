@@ -8,7 +8,7 @@ import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
 import { parseCompactionSignal, stripCompactionSignal } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
-import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, extractMessageModel, setLastTokenEstimate, setLastAgent, getLastAgent, getCompactionCooldownRemaining, setCompactionCooldown, setCompactingActive, decrementCompactionCooldown, incrementTurnsSinceCompaction, resetTurnsSinceCompaction, getTurnsSinceCompaction, observeUserTurn, isInstructionSent, markInstructionSent } from "./compaction/state.js";
+import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, extractMessageModel, setLastTokenEstimate, setLastAgent, getLastAgent, getCompactionCooldownRemaining, setCompactionCooldown, setCompactingActive, decrementCompactionCooldown, incrementTurnsSinceCompaction, resetTurnsSinceCompaction, getTurnsSinceCompaction, observeUserTurn, extractMessageSessionId, isInstructionSent, markInstructionSent } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
 import { estimateMessageTokens } from "./compaction/tokens.js";
 import { loadPruningConfig, PruningConfigResolver, loadCompactionConfig, CompactionConfigResolver, applyCompactionEnvOverrides, type CompactionConfig } from "./compaction/config-resolver.js";
@@ -101,39 +101,31 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
    * reset accounting state on failure.
    */
   async function triggerNativeCompaction(
-    realSessionID: string,
-    stateSessionID: string,
+    sessionID: string,
     cooldownTurns: number,
   ): Promise<boolean> {
     // Emergency kill-switch: native summarize hangs in opencode 1.19.6.
     // Set CC_DISABLE_NATIVE_COMPACTION=1 to disable it without rebuilding;
     // removable once the hang is fixed upstream.
     if (process.env.CC_DISABLE_NATIVE_COMPACTION === "1") {
-      logDebugEvent("compaction.native.disabled", { sessionID: realSessionID });
+      logDebugEvent("compaction.native.disabled", { sessionID });
       return false;
     }
     // Never compact a child/subagent session — native summarize would kill it.
-    if (await isChildSession(realSessionID)) {
-      logDebugEvent("compaction.summarize.skipped_child", { sessionID: realSessionID });
+    if (await isChildSession(sessionID)) {
+      logDebugEvent("compaction.summarize.skipped_child", { sessionID });
       return false;
     }
-    // Provider/model and cooldown use the plugin's state key (messages.transform
-    // receives an empty input object, so state is keyed independently of the
-    // real session id).
-    const userModel = getCompactionState(stateSessionID).lastUserModel;
+    const userModel = getCompactionState(sessionID).lastUserModel;
     // The summarize endpoint requires a body with providerID/modelID. Sending
     // `body: undefined` (no tracked model yet) is rejected with
     // "Expected object, got undefined", so skip instead of failing the turn.
     if (!userModel.providerID || !userModel.modelID) {
-      logDebugEvent("compaction.summarize.skipped_no_model", {
-        sessionID: realSessionID,
-        stateSessionID,
-      });
+      logDebugEvent("compaction.summarize.skipped_no_model", { sessionID });
       return false;
     }
     logDebugEvent("compaction.summarize.triggered", {
-      sessionID: realSessionID,
-      stateSessionID,
+      sessionID,
       providerID: userModel.providerID,
       modelID: userModel.modelID,
       cooldownTurns,
@@ -141,48 +133,44 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
     // Set BEFORE the request: the summarizer's own LLM request re-enters
     // messages.transform while this promise is still pending. Without this
     // flag that re-entry sees no cooldown and starts a second summarize.
-    setCompactingActive(realSessionID, true);
+    setCompactingActive(sessionID, true);
     try {
       // Generated SDK signature: summarize(options) — one options object.
       // `throwOnError` belongs INSIDE it; a second argument is silently ignored.
       await client.session.summarize({
-        path: { id: realSessionID },
+        path: { id: sessionID },
         query: { directory: process.cwd() },
         body: { providerID: userModel.providerID, modelID: userModel.modelID },
         throwOnError: true,
       });
-      setCompactionCooldown(stateSessionID, cooldownTurns);
+      setCompactionCooldown(sessionID, cooldownTurns);
       logDebugEvent("compaction.summarize.completed", {
-        sessionID: realSessionID,
-        stateSessionID,
+        sessionID,
         cooldown: cooldownTurns,
       });
       return true;
     } catch (err) {
-      const msg = `\x1b[31m[four-opencode-context-curator] ❌ compaction request failed (session=${realSessionID}): ${String(err)}\x1b[0m`;
+      const msg = `\x1b[31m[four-opencode-context-curator] ❌ compaction request failed (session=${sessionID}): ${String(err)}\x1b[0m`;
       process.stderr.write(msg + "\n");
       logDebugEvent("compaction.summarize.error", {
         error: String(err),
-        sessionID: realSessionID,
+        sessionID,
       });
       return false;
     } finally {
-      setCompactingActive(realSessionID, false);
+      setCompactingActive(sessionID, false);
     }
   }
 
   /**
    * A trigger is blocked while a summarize is in flight or the cooldown runs.
-   * The transform input's session id may be "default"/"unknown" (opencode
-   * passes an empty input object), while state is keyed by the real session id
-   * taken from the messages — so both keys must be checked.
+   * State is keyed by the real session id (derived from the messages, since
+   * the transform input is an empty object), so one lookup covers both.
    */
-  function isCompactionBlocked(stateKey: string, realSessionID: string): boolean {
+  function isCompactionBlocked(sessionID: string): boolean {
     return (
-      getCompactionState(stateKey).compactingActive ||
-      getCompactionState(realSessionID).compactingActive ||
-      getCompactionCooldownRemaining(stateKey) > 0 ||
-      getCompactionCooldownRemaining(realSessionID) > 0
+      getCompactionState(sessionID).compactingActive ||
+      getCompactionCooldownRemaining(sessionID) > 0
     );
   }
 
@@ -235,7 +223,16 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
       }
     },
     "experimental.chat.messages.transform": async (_input, output) => {
-      const sessionID = (_input as any)?.sessionID ?? "default";
+      // `messages.transform` receives an EMPTY input object, so `_input.sessionID`
+      // is the shared "default" key — never the real session. Derive the real
+      // session id from the messages once, up front, and use it for EVERY state
+      // call below so parent and subagent sessions never share compaction state.
+      const msgs = output.messages as Array<{
+        info?: { role?: string; sessionID?: string; id?: string };
+        parts?: Array<{ type: string; text?: string }>;
+      }>;
+      const sessionID =
+        extractMessageSessionId(msgs) ?? process.env.OPENDOC_SESSION_ID ?? "default";
       try {
         logDebugEvent("compaction.messages.transform", { messageCount: output.messages.length });
 
@@ -252,11 +249,6 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
         if (lastAgent !== null) {
           setLastAgent(sessionID, lastAgent);
         }
-
-        const msgs = output.messages as Array<{
-          info?: { role?: string; sessionID?: string; id?: string };
-          parts?: Array<{ type: string; text?: string }>;
-        }>;
 
         // Compaction thresholds/cooldown: agent config → default → env overrides.
         const activeAgent = lastAgent ?? getLastAgent(sessionID);
@@ -327,13 +319,9 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
               // Trigger native session compaction on compact_now — same as /compact slash command.
               // Guard: configured cooldown (`cooldownTurns`, default 3) prevents
               // double-trigger during nested compaction flows.
-              // Extract sessionID from messages (every message carries session's ID)
-              const signalMsg = msgs.find(m => m.info?.sessionID);
-              const realSessionID = signalMsg?.info?.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "unknown";
-              const inCooldown = isCompactionBlocked(sessionID, realSessionID);
+              const inCooldown = isCompactionBlocked(sessionID);
               if (signal.advice === "compact_now" && !inCooldown) {
                 const compacted = await triggerNativeCompaction(
-                  realSessionID,
                   sessionID,
                   compactionSettings.cooldownTurns,
                 );
@@ -341,14 +329,9 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
                 clearSignal(sessionID); // skip plugin compaction — native summarize handles it
               } else if (signal.advice === "compact_now" && inCooldown) {
                 logDebugEvent("compaction.summarize.cooldown_skipped", {
-                  sessionID: realSessionID,
-                  cooldownRemaining: Math.max(
-                    getCompactionCooldownRemaining(sessionID),
-                    getCompactionCooldownRemaining(realSessionID),
-                  ),
-                  compactingActive:
-                    getCompactionState(sessionID).compactingActive ||
-                    getCompactionState(realSessionID).compactingActive,
+                  sessionID,
+                  cooldownRemaining: getCompactionCooldownRemaining(sessionID),
+                  compactingActive: getCompactionState(sessionID).compactingActive,
                 });
                 clearSignal(sessionID); // still clear to avoid plugin compaction
               }
@@ -377,9 +360,7 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
 
         // Auto-trigger: token threshold AND user-turn threshold (configurable).
         const turnsSince = getTurnsSinceCompaction(sessionID);
-        const signalMsg2 = msgs.find(m => m.info?.sessionID);
-        const realSid2 = signalMsg2?.info?.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "unknown";
-        const inCooldown = isCompactionBlocked(sessionID, realSid2);
+        const inCooldown = isCompactionBlocked(sessionID);
 
         if (
           totalTokens > compactionSettings.autoTokenThreshold &&
@@ -391,10 +372,9 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
             turnsSince,
             autoTokenThreshold: compactionSettings.autoTokenThreshold,
             autoTurnThreshold: compactionSettings.autoTurnThreshold,
-            sessionID: realSid2,
+            sessionID,
           });
           const compacted = await triggerNativeCompaction(
-            realSid2,
             sessionID,
             compactionSettings.cooldownTurns,
           );
