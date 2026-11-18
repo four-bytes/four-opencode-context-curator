@@ -8,7 +8,7 @@ import { IssueSliceLayer } from "./layers/issue-slice.js";
 import { createCompactionInstruction } from "./compaction/signal-injector.js";
 import { parseCompactionSignal, stripCompactionSignal } from "./compaction/signal-parser.js";
 import { applyPruning } from "./compaction/pruning-engine.js";
-import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, setLastTokenEstimate, setLastAgent, getLastAgent, getCompactionCooldownRemaining, setCompactionCooldown, setCompactingActive, decrementCompactionCooldown, incrementTurnsSinceCompaction, resetTurnsSinceCompaction, getTurnsSinceCompaction, observeUserTurn, isInstructionSent, markInstructionSent } from "./compaction/state.js";
+import { getCompactionState, clearSignal, clearTransformState, setLastSignal, setLastUserModel, extractMessageModel, setLastTokenEstimate, setLastAgent, getLastAgent, getCompactionCooldownRemaining, setCompactionCooldown, setCompactingActive, decrementCompactionCooldown, incrementTurnsSinceCompaction, resetTurnsSinceCompaction, getTurnsSinceCompaction, observeUserTurn, isInstructionSent, markInstructionSent } from "./compaction/state.js";
 import { compactMessageHistory } from "./compaction/message-compactor.js";
 import { estimateMessageTokens } from "./compaction/tokens.js";
 import { loadPruningConfig, PruningConfigResolver, loadCompactionConfig, CompactionConfigResolver, applyCompactionEnvOverrides, type CompactionConfig } from "./compaction/config-resolver.js";
@@ -105,6 +105,13 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
     stateSessionID: string,
     cooldownTurns: number,
   ): Promise<boolean> {
+    // Emergency kill-switch: native summarize hangs in opencode 1.19.6.
+    // Set CC_DISABLE_NATIVE_COMPACTION=1 to disable it without rebuilding;
+    // removable once the hang is fixed upstream.
+    if (process.env.CC_DISABLE_NATIVE_COMPACTION === "1") {
+      logDebugEvent("compaction.native.disabled", { sessionID: realSessionID });
+      return false;
+    }
     // Never compact a child/subagent session — native summarize would kill it.
     if (await isChildSession(realSessionID)) {
       logDebugEvent("compaction.summarize.skipped_child", { sessionID: realSessionID });
@@ -114,6 +121,16 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
     // receives an empty input object, so state is keyed independently of the
     // real session id).
     const userModel = getCompactionState(stateSessionID).lastUserModel;
+    // The summarize endpoint requires a body with providerID/modelID. Sending
+    // `body: undefined` (no tracked model yet) is rejected with
+    // "Expected object, got undefined", so skip instead of failing the turn.
+    if (!userModel.providerID || !userModel.modelID) {
+      logDebugEvent("compaction.summarize.skipped_no_model", {
+        sessionID: realSessionID,
+        stateSessionID,
+      });
+      return false;
+    }
     logDebugEvent("compaction.summarize.triggered", {
       sessionID: realSessionID,
       stateSessionID,
@@ -128,14 +145,10 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
     try {
       // Generated SDK signature: summarize(options) — one options object.
       // `throwOnError` belongs INSIDE it; a second argument is silently ignored.
-      const body =
-        userModel.providerID && userModel.modelID
-          ? { providerID: userModel.providerID, modelID: userModel.modelID }
-          : undefined;
       await client.session.summarize({
         path: { id: realSessionID },
         query: { directory: process.cwd() },
-        body,
+        body: { providerID: userModel.providerID, modelID: userModel.modelID },
         throwOnError: true,
       });
       setCompactionCooldown(stateSessionID, cooldownTurns);
@@ -260,51 +273,42 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
           incrementTurnsSinceCompaction(sessionID);
         }
 
-        // Derive provider/model from last user message for summarize candidate
-        let lastUserMsg: (typeof output.messages)[number] | undefined;
+        // Derive provider/model for the summarize candidate. Scan newest→oldest
+        // for the last USER message carrying a model, then fall back to the most
+        // recent ASSISTANT message (its top-level IDs are always populated).
+        let extractedModel: { providerID: string; modelID: string; path: "user" | "assistant" } | null = null;
         for (let i = output.messages.length - 1; i >= 0; i--) {
-          const m = output.messages[i] as { info?: { role?: string } };
-          if (m.info?.role === "user") {
-            lastUserMsg = output.messages[i];
+          const info = (output.messages[i] as { info?: { role?: string } }).info;
+          if (info?.role !== "user") continue;
+          const model = extractMessageModel(info);
+          if (model) {
+            extractedModel = { ...model, path: "user" };
             break;
           }
         }
-        if (lastUserMsg) {
-          const info = (lastUserMsg as { info?: Record<string, unknown> }).info;
-          if (info) {
-            let providerID: string | undefined;
-            let modelID: string | undefined;
-            let path: string | undefined;
-            if (typeof info.providerID === "string" && typeof info.modelID === "string") {
-              providerID = info.providerID;
-              modelID = info.modelID;
-              path = "info";
-            } else if (
-              typeof info.agent === "object" &&
-              info.agent !== null &&
-              typeof (info.agent as Record<string, unknown>).providerID === "string" &&
-              typeof (info.agent as Record<string, unknown>).modelID === "string"
-            ) {
-              providerID = (info.agent as Record<string, unknown>).providerID as string;
-              modelID = (info.agent as Record<string, unknown>).modelID as string;
-              path = "info.agent";
-            } else if (
-              typeof info.model === "object" &&
-              info.model !== null &&
-              typeof (info.model as Record<string, unknown>).providerID === "string" &&
-              typeof (info.model as Record<string, unknown>).modelID === "string"
-            ) {
-              providerID = (info.model as Record<string, unknown>).providerID as string;
-              modelID = (info.model as Record<string, unknown>).modelID as string;
-              path = "info.model";
-            }
-            if (path) {
-              setLastUserModel(sessionID, providerID, modelID);
-              logDebugEvent("compaction.user_model.updated", { providerID, modelID, path });
-            } else {
-              logDebugEvent("compaction.user_model.shape_unknown", { keys: Object.keys(info) });
+        if (!extractedModel) {
+          for (let i = output.messages.length - 1; i >= 0; i--) {
+            const info = (output.messages[i] as { info?: { role?: string } }).info;
+            if (info?.role !== "assistant") continue;
+            const model = extractMessageModel(info);
+            if (model) {
+              extractedModel = { ...model, path: "assistant" };
+              break;
             }
           }
+        }
+        if (extractedModel) {
+          setLastUserModel(sessionID, extractedModel.providerID, extractedModel.modelID);
+          logDebugEvent("compaction.user_model.updated", {
+            providerID: extractedModel.providerID,
+            modelID: extractedModel.modelID,
+            path: extractedModel.path,
+          });
+        } else {
+          const sample = output.messages
+            .slice(-3)
+            .map((m) => (m as { info?: unknown }).info ?? null);
+          logDebugEvent("compaction.user_model.shape_unknown", { sample: JSON.stringify(sample) });
         }
 
         // Parse compaction signal from LAST assistant message in history

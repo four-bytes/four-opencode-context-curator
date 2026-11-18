@@ -12,6 +12,42 @@ export interface LastUserModel {
   modelID: string | undefined;
 }
 
+export interface MessageModel {
+  providerID: string;
+  modelID: string;
+}
+
+/**
+ * Extract a provider/model pair from a message `info` object.
+ *
+ * `experimental.chat.messages.transform` delivers `Message` objects from
+ * `@opencode-ai/sdk`. Two shapes carry a model:
+ *   - AssistantMessage: top-level `providerID` + `modelID`
+ *   - UserMessage: `model: { providerID: string, modelID: string }`
+ * Anything else yields `null`. `UserMessage.agent` is a string, never an
+ * object, so there is intentionally no `agent`-based branch.
+ */
+export function extractMessageModel(info: unknown): MessageModel | null {
+  if (info === null || typeof info !== "object") return null;
+  const record = info as Record<string, unknown>;
+
+  // AssistantMessage shape: top-level IDs.
+  if (typeof record.providerID === "string" && typeof record.modelID === "string") {
+    return { providerID: record.providerID, modelID: record.modelID };
+  }
+
+  // UserMessage shape: nested `model` object.
+  const model = record.model;
+  if (model !== null && typeof model === "object") {
+    const nested = model as Record<string, unknown>;
+    if (typeof nested.providerID === "string" && typeof nested.modelID === "string") {
+      return { providerID: nested.providerID, modelID: nested.modelID };
+    }
+  }
+
+  return null;
+}
+
 export interface CompactionState {
   lastSignal: CompactionSignal | null;
   appliedForPruning: Set<string>;

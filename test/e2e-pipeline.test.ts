@@ -72,8 +72,8 @@ describe("E2E Harness Smoke Test", () => {
     const input = { sessionID: "e2e" };
     const output = {
       messages: [
-        { info: { role: "user" }, parts: [{ type: "text", text: "Hello" }] },
-        { info: { role: "assistant" }, parts: [{ type: "text", text: "Hi there\n\ncompaction_advice: compact_now\nreason: Test" }] },
+        { info: { role: "user", model: { providerID: "test-provider", modelID: "test-model" } }, parts: [{ type: "text", text: "Hello" }] },
+        { info: { role: "assistant", providerID: "test-provider", modelID: "test-model" }, parts: [{ type: "text", text: "Hi there\n\ncompaction_advice: compact_now\nreason: Test" }] },
       ],
     };
     await messagesTransform(input, output);
@@ -90,9 +90,9 @@ describe("E2E Harness Smoke Test", () => {
     const input = { sessionID: "e2e" };
     const output = {
       messages: [
-        { info: { role: "user" }, parts: [{ type: "text", text: "Hello" }] },
-        { info: { role: "assistant" }, parts: [{ type: "text", text: "… [compacted: reason]" }] },
-        { info: { role: "user" }, parts: [{ type: "text", text: "Next prompt" }] },
+        { info: { role: "user", model: { providerID: "test-provider", modelID: "test-model" } }, parts: [{ type: "text", text: "Hello" }] },
+        { info: { role: "assistant", providerID: "test-provider", modelID: "test-model" }, parts: [{ type: "text", text: "… [compacted: reason]" }] },
+        { info: { role: "user", model: { providerID: "test-provider", modelID: "test-model" } }, parts: [{ type: "text", text: "Next prompt" }] },
       ],
     };
 
@@ -133,8 +133,8 @@ describe("messages.transform turn accounting + native compaction", () => {
   function history(sid: string, userIds: string[], assistantText = "ok") {
     const messages: any[] = [];
     for (const id of userIds) {
-      messages.push({ info: { role: "user", id, sessionID: sid }, parts: [{ type: "text", text: "prompt" }] });
-      messages.push({ info: { role: "assistant", id: `a-${id}`, sessionID: sid }, parts: [{ type: "text", text: assistantText }] });
+      messages.push({ info: { role: "user", id, sessionID: sid, model: { providerID: "test-provider", modelID: "test-model" } }, parts: [{ type: "text", text: "prompt" }] });
+      messages.push({ info: { role: "assistant", id: `a-${id}`, sessionID: sid, providerID: "test-provider", modelID: "test-model" }, parts: [{ type: "text", text: assistantText }] });
     }
     return messages;
   }
@@ -171,9 +171,9 @@ describe("messages.transform turn accounting + native compaction", () => {
     // Prose is tiny; only the 4000-char tool output crosses the token threshold.
     const output = {
       messages: [
-        { info: { role: "user", id: "u1", sessionID: sid }, parts: [{ type: "text", text: "go" }] },
+        { info: { role: "user", id: "u1", sessionID: sid, model: { providerID: "test-provider", modelID: "test-model" } }, parts: [{ type: "text", text: "go" }] },
         {
-          info: { role: "assistant", id: "a1", sessionID: sid },
+          info: { role: "assistant", id: "a1", sessionID: sid, providerID: "test-provider", modelID: "test-model" },
           parts: [{ type: "tool", tool: "bash", state: { status: "completed", output: "x".repeat(4000) } }],
         },
       ],
@@ -254,9 +254,9 @@ describe("native compaction is root-session only", () => {
 
   function compactNowHistory(sid: string) {
     return [
-      { info: { role: "user", id: "u1", sessionID: sid }, parts: [{ type: "text", text: "go" }] },
+      { info: { role: "user", id: "u1", sessionID: sid, model: { providerID: "test-provider", modelID: "test-model" } }, parts: [{ type: "text", text: "go" }] },
       {
-        info: { role: "assistant", id: "a1", sessionID: sid },
+        info: { role: "assistant", id: "a1", sessionID: sid, providerID: "test-provider", modelID: "test-model" },
         parts: [{ type: "text", text: "done\n\ncompaction_advice: compact_now\nreason: done" }],
       },
     ];
@@ -267,9 +267,9 @@ describe("native compaction is root-session only", () => {
   function growingTurns(sid: string, count: number) {
     const messages: any[] = [];
     for (let i = 1; i <= count; i++) {
-      messages.push({ info: { role: "user", id: `u${i}`, sessionID: sid }, parts: [{ type: "text", text: "go" }] });
+      messages.push({ info: { role: "user", id: `u${i}`, sessionID: sid, model: { providerID: "test-provider", modelID: "test-model" } }, parts: [{ type: "text", text: "go" }] });
       messages.push({
-        info: { role: "assistant", id: `a${i}`, sessionID: sid },
+        info: { role: "assistant", id: `a${i}`, sessionID: sid, providerID: "test-provider", modelID: "test-model" },
         parts: [{ type: "text", text: i === count ? "x".repeat(300_000) : "ok" }],
       });
     }
@@ -392,9 +392,9 @@ describe("compaction re-entrancy guard", () => {
 
   function compactNowHistory(sid: string) {
     return [
-      { info: { role: "user", id: "u1", sessionID: sid }, parts: [{ type: "text", text: "go" }] },
+      { info: { role: "user", id: "u1", sessionID: sid, model: { providerID: "test-provider", modelID: "test-model" } }, parts: [{ type: "text", text: "go" }] },
       {
-        info: { role: "assistant", id: "a1", sessionID: sid },
+        info: { role: "assistant", id: "a1", sessionID: sid, providerID: "test-provider", modelID: "test-model" },
         parts: [{ type: "text", text: "done\n\ncompaction_advice: compact_now\nreason: done" }],
       },
     ];
@@ -402,9 +402,9 @@ describe("compaction re-entrancy guard", () => {
 
   function hugeHistory(sid: string) {
     return [
-      { info: { role: "user", id: "u1", sessionID: sid }, parts: [{ type: "text", text: "go" }] },
+      { info: { role: "user", id: "u1", sessionID: sid, model: { providerID: "test-provider", modelID: "test-model" } }, parts: [{ type: "text", text: "go" }] },
       {
-        info: { role: "assistant", id: "a1", sessionID: sid },
+        info: { role: "assistant", id: "a1", sessionID: sid, providerID: "test-provider", modelID: "test-model" },
         parts: [{ type: "text", text: "x".repeat(300_000) }],
       },
     ];
