@@ -29,5 +29,10 @@ export function parseCompactionSignal(text: string): CompactionSignal | null {
 
 /** Strip compaction_advice block from text (for testing). */
 export function stripCompactionSignal(text: string): string {
-  return text.replace(/\n*compaction_advice:.*[\s\S]*$/i, "").trimEnd();
+  // Index-based instead of a regex: the old `/\n*compaction_advice:.*[\s\S]*$/i`
+  // backtracks polynomially on inputs with many '\n' (ReDoS, CWE-1333).
+  // `indexOf` on the lowercased text is linear and case-insensitive equivalent.
+  const idx = text.toLowerCase().indexOf("compaction_advice:");
+  if (idx === -1) return text;
+  return text.slice(0, idx).trimEnd();
 }
