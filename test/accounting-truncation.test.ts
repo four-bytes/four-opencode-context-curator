@@ -1,4 +1,6 @@
 import { describe, it, expect, afterEach } from "bun:test";
+import { existsSync, readdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import {
   compactMessageHistory,
   countChars,
@@ -9,6 +11,23 @@ import {
 } from "../src/compaction/message-compactor.js";
 import { estimateMessageTokens } from "../src/compaction/tokens.js";
 import { observeUserTurn, clearSignal } from "../src/compaction/state.js";
+import { getDiaryCacheDir } from "../src/compaction/diary.js";
+
+// compactMessageHistory writes a persistent diary entry keyed on the session
+// id found in the messages. A test-specific session id plus cleanup keeps
+// repeated runs from polluting the real diary cache.
+const TEST_SESSION = "accounting-truncation-test";
+const REPLACEMENT_MARKER = "↑ see above (message ";
+
+function removeDiaryEntries(sessionId: string): void {
+  const dir = getDiaryCacheDir();
+  if (!existsSync(dir)) return;
+  for (const file of readdirSync(dir)) {
+    if (file.startsWith(`compaction-events-${sessionId}-`) && file.endsWith(".jsonl")) {
+      rmSync(join(dir, file), { force: true });
+    }
+  }
+}
 
 function text(text: string): Part {
   return { type: "text", text };
@@ -25,6 +44,7 @@ function msg(role: string, parts: Part[], id?: string): MessageItem {
 afterEach(() => {
   clearSignal("accounting");
   clearSignal("dedup");
+  removeDiaryEntries(TEST_SESSION);
 });
 
 describe("global accounting", () => {
@@ -44,6 +64,7 @@ describe("global accounting", () => {
       msg("user", [text("again")], "u3"),
       msg("assistant", [text("done")], "a3"),
     ];
+    for (const m of messages) m.info.sessionID = TEST_SESSION;
 
     const before = countChars(messages);
     expect(before).toBeGreaterThan(output.length); // tool output + prose
@@ -196,5 +217,55 @@ describe("observeUserTurn per-agent tracking", () => {
     const sidNoIds = "turn-test-agents-noids";
     expect(observeUserTurn(sidNoIds, [noId], "parent")).toBe(true);
     expect(observeUserTurn(sidNoIds, [noId], "subagent")).toBe(true);
+  });
+});
+
+describe("dedup is terminal and does not collapse curated excerpts", () => {
+  it("never rewrites or recounts its own replacement markers", () => {
+    const output = Array.from({ length: 30 }, (_, i) => `identical read ${i + 1}`).join("\n");
+    const messages: MessageItem[] = [
+      msg("assistant", [toolOutput("read", output)]),
+      msg("assistant", [toolOutput("read", output)]),
+    ];
+
+    expect(deduplicateMessageParts(messages)).toBe(1);
+    const marker = messages[1].parts[0].state!.output!;
+    expect(marker).toContain(REPLACEMENT_MARKER);
+
+    // A second pass must not hash the marker again.
+    expect(deduplicateMessageParts(messages)).toBe(0);
+    expect(messages[1].parts[0].state!.output).toBe(marker);
+  });
+
+  it("does not collapse distinct logs that only share the retained head and tail", () => {
+    const head = Array.from({ length: 20 }, (_, i) => `head ${i + 1}`);
+    const tail = Array.from({ length: 20 }, (_, i) => `tail ${i + 1}`);
+    const middle = (tag: string) => Array.from({ length: 460 }, (_, i) => `${tag} ${i + 1}`);
+    const messages: MessageItem[] = [
+      msg("assistant", [toolOutput("read", [...head, ...middle("alpha"), ...tail].join("\n"))]),
+      msg("assistant", [toolOutput("read", [...head, ...middle("beta"), ...tail].join("\n"))]),
+    ];
+    for (const m of messages) m.info.sessionID = TEST_SESSION;
+
+    const first = compactMessageHistory(messages, "dedup-order");
+    expect(first.applied).toBe(true);
+    expect(messages[1].parts[0].state!.output).not.toContain(REPLACEMENT_MARKER);
+
+    // Excerpts of two distinct logs are identical now; a later pass must not
+    // mistake them for duplicates.
+    const second = compactMessageHistory(messages, "dedup-order");
+    expect(second.applied).toBe(false);
+    expect(messages[1].parts[0].state!.output).not.toContain(REPLACEMENT_MARKER);
+  });
+
+  it("bounds critical-line preservation instead of leaving oversized logs whole", () => {
+    const lines = Array.from({ length: 600 }, (_, i) => `line ${i + 1}`);
+    for (let i = 100; i < 300; i++) lines[i] = `ERROR: failure ${i}`;
+    const messages: MessageItem[] = [msg("assistant", [toolOutput("bash", lines.join("\n"))])];
+
+    expect(truncateMessageParts(messages)).toBe(1);
+    const out = messages[0].parts[0].state!.output!;
+    expect(out).toContain("lines truncated");
+    expect(out).toContain("[100 critical lines preserved]");
   });
 });

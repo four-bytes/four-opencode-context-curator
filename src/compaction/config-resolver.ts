@@ -208,7 +208,11 @@ export function loadPruningConfig(directory: string | undefined): PruningConfigM
       continue;
     }
     const parsed = parsePruningConfig(raw);
-    if (parsed) Object.assign(merged, parsed);
+    if (parsed) {
+      for (const [agent, cfg] of Object.entries(parsed)) {
+        merged[agent] = { ...merged[agent], ...cfg };
+      }
+    }
   }
   return merged;
 }
@@ -254,7 +258,9 @@ function sanitizeCompactionAgentConfig(value: unknown): AgentCompactionConfig | 
   const out: AgentCompactionConfig = {};
   for (const key of COMPACTION_NUMERIC_KEYS) {
     const v = obj[key];
-    if (typeof v === "number" && Number.isFinite(v) && v >= 0) {
+    // Turn/token/cooldown counts are whole numbers; the env path already
+    // rejects fractions, so JSON must validate identically.
+    if (typeof v === "number" && Number.isInteger(v) && v >= 0) {
       out[key] = v;
     }
   }
@@ -299,7 +305,11 @@ export function loadCompactionConfig(directory: string | undefined): CompactionC
       continue;
     }
     const parsed = parseCompactionConfig(raw);
-    if (parsed) Object.assign(merged, parsed);
+    if (parsed) {
+      for (const [agent, cfg] of Object.entries(parsed)) {
+        merged[agent] = { ...merged[agent], ...cfg };
+      }
+    }
   }
   return merged;
 }

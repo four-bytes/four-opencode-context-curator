@@ -321,7 +321,8 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
               logDebugEvent("compaction.signal.parsed", { advice: signal.advice, reason: signal.reason, sessionID });
 
               // Trigger native session compaction on compact_now — same as /compact slash command.
-              // Guard: 3-turns cooldown prevents double-trigger during nested compaction flows.
+              // Guard: configured cooldown (`cooldownTurns`, default 3) prevents
+              // double-trigger during nested compaction flows.
               // Extract sessionID from messages (every message carries session's ID)
               const signalMsg = msgs.find(m => m.info?.sessionID);
               const realSessionID = signalMsg?.info?.sessionID ?? process.env.OPENDOC_SESSION_ID ?? "unknown";

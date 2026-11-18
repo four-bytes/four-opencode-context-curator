@@ -1,4 +1,7 @@
 import { describe, it, expect } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   stripJsoncComments,
   stripTrailingCommas,
@@ -176,11 +179,58 @@ describe("parseCompactionConfig", () => {
   it("returns null when the compaction block is missing", () => {
     expect(parseCompactionConfig('{"context_curator": {"pruning": {}}}')).toBeNull();
   });
+
+  it("rejects fractional counts like the env path", () => {
+    const raw = JSON.stringify({
+      context_curator: {
+        compaction: { default: { autoTurnThreshold: 2.5, autoTokenThreshold: 40000 } },
+      },
+    });
+    expect(parseCompactionConfig(raw)).toEqual({ default: { autoTokenThreshold: 40000 } });
+  });
 });
 
 describe("loadCompactionConfig", () => {
   it("returns an empty map for missing directory", () => {
     expect(loadCompactionConfig(undefined)).toEqual({});
+  });
+
+  it("merges per-agent keys across opencode.json and opencode.jsonc", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cc-config-"));
+    try {
+      writeFileSync(
+        join(dir, "opencode.json"),
+        JSON.stringify({
+          context_curator: {
+            compaction: {
+              default: { autoTurnThreshold: 2 },
+              architect: { autoTokenThreshold: 10000 },
+            },
+            pruning: { default: { maxToolLogLines: 40 }, architect: { maxToolLogLines: 8 } },
+          },
+        }),
+      );
+      writeFileSync(
+        join(dir, "opencode.jsonc"),
+        `{
+          // Later file wins per key, not per agent entry.
+          "context_curator": {
+            "compaction": { "architect": { "cooldownTurns": 5 } },
+            "pruning": { "architect": { "headerLines": 3 } }
+          }
+        }`,
+      );
+      expect(loadCompactionConfig(dir)).toEqual({
+        default: { autoTurnThreshold: 2 },
+        architect: { autoTokenThreshold: 10000, cooldownTurns: 5 },
+      });
+      expect(loadPruningConfig(dir)).toEqual({
+        default: { maxToolLogLines: 40 },
+        architect: { maxToolLogLines: 8, headerLines: 3 },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

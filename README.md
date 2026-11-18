@@ -85,15 +85,16 @@ Assistant prose and tool logs are handled separately:
 
 | Setting | Default | Env override |
 |---|---|---|
-| Tool-log lines | 200 (`task` tool: ×2.5) | `CC_MAX_TOOL_LINES` |
+| Tool-log lines (messages.transform only; not governed by `context_curator.pruning`) | 200 (`task` tool: ×2.5) | `CC_MAX_TOOL_LINES` |
 | Assistant-prose lines | 400 | `CC_MAX_ASSISTANT_LINES` |
 | Header/footer lines kept | 20 / 20 | `CC_TOOL_HEADER_LINES` / `CC_TOOL_FOOTER_LINES` |
 
 User messages are never truncated. Assistant prose that contains instructions,
 decisions, or actionable errors is never truncated. Truncated tool logs keep the
-header and footer plus any critical lines (instructions, decisions, actionable
-errors) from the omitted middle section. Identical repeated tool output (repeat
-reads) is replaced with a reference to its first occurrence.
+header and footer plus a bounded excerpt of up to 100 critical lines
+(instructions, decisions, actionable errors) from the omitted middle section;
+logs with more critical lines keep the first 100 of them. Identical repeated
+tool output (repeat reads) is replaced with a reference to its first occurrence.
 
 ## Tools
 

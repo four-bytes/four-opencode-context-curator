@@ -4,7 +4,7 @@
 
 ### Fixed
 - Global accounting (#164): `countChars()` and `estimateMessageTokens()` now include tool output (`part.state.output`). Truncating a 500-line tool log previously reported `0%` reduction and `0` tokens for tool-heavy sessions, so auto-compaction never fired.
-- Truncation separation (#164): assistant prose and tool logs use independent thresholds. Assistant prose containing instructions, decisions, or actionable errors is never truncated; truncated tool logs preserve actionable error lines from the omitted middle.
+- Truncation separation (#164): assistant prose and tool logs use independent thresholds. Assistant prose matching known instruction, decision, or actionable-error patterns is preserved; truncated tool logs preserve matching critical lines from the omitted middle.
 - Turn accounting (#164): `turnsSinceCompaction` and the compaction cooldown now advance only on a new user message, not on every `messages.transform` invocation (tool loops previously burned them several times per turn).
 - Cooldown/provider-model state is read and written under the same plugin state key (#164), so a triggered compaction is actually observed as "in cooldown".
 

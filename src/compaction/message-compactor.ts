@@ -78,17 +78,12 @@ export function isProtectedAssistantProse(text: string): boolean {
   return false;
 }
 
-interface PreservedCriticalLines {
-  lines: string[];
-  /** More critical lines than the cap — do not truncate this part at all. */
-  overflow: boolean;
-}
-
-function collectCriticalLines(
-  lines: string[],
-  start: number,
-  end: number,
-): PreservedCriticalLines {
+/**
+ * Collect up to MAX_PRESERVED_CRITICAL_LINES critical lines from a range.
+ * The excerpt is always bounded: a log with more critical lines is still
+ * truncated deterministically instead of bypassing truncation entirely.
+ */
+function collectCriticalLines(lines: string[], start: number, end: number): string[] {
   const collected: string[] = [];
   const seen = new Set<string>();
   for (let i = start; i < end; i++) {
@@ -97,13 +92,11 @@ function collectCriticalLines(
     if (!matchesAny(line, CRITICAL_LINE_PATTERNS)) continue;
     const key = line.trim();
     if (seen.has(key)) continue;
-    if (collected.length >= MAX_PRESERVED_CRITICAL_LINES) {
-      return { lines: collected, overflow: true };
-    }
+    if (collected.length >= MAX_PRESERVED_CRITICAL_LINES) break;
     seen.add(key);
     collected.push(line);
   }
-  return { lines: collected, overflow: false };
+  return collected;
 }
 
 // Configurable thresholds — read from env vars with sensible defaults.
@@ -260,15 +253,12 @@ function truncateMessagePartsInternal(messages: MessageItem[]): TruncationResult
       const middleStart = settings.headerLines;
       const middleEnd = lines.length - settings.footerLines;
       const preserved = collectCriticalLines(lines, middleStart, middleEnd);
-      // If the middle holds more critical lines than we can preserve, keep
-      // the whole log rather than dropping instructions, decisions or errors.
-      if (preserved.overflow) continue;
 
       st.output = truncateWithPreserved(
         lines,
         settings.headerLines,
         settings.footerLines,
-        preserved.lines,
+        preserved,
       );
       truncations++;
       addStat(part.tool ?? "unknown-tool", lines.length, st.output.split("\n").length);
@@ -281,11 +271,34 @@ export function truncateMessageParts(messages: MessageItem[]): number {
   return truncateMessagePartsInternal(messages).count;
 }
 
+const REPLACEMENT_MARKER_PREFIX = "↑ see above (message ";
+const TRUNCATION_MARKER_PATTERN = /… \[\d+ lines truncated\] …/;
+
+/**
+ * Markers written by a previous pass are pointers, not payload. Hashing them
+ * again would rewrite identical markers, inflate `duplicates` and keep
+ * reporting work on every transform even though nothing changed.
+ */
+function isReplacementMarker(content: string): boolean {
+  return content.startsWith(REPLACEMENT_MARKER_PREFIX);
+}
+
+/**
+ * Truncated content is the curated excerpt, not the original log. Two distinct
+ * logs can share the same retained head and tail, so hashing the excerpt would
+ * collapse them into a misleading pointer. Already-truncated parts are skipped
+ * instead; genuine duplicates were collapsed on the pass that saw the originals.
+ */
+function isTruncatedContent(content: string): boolean {
+  return TRUNCATION_MARKER_PATTERN.test(content);
+}
+
 function dedupeCandidate(part: Part): string | null {
   if (part.type === "text" && part.text && part.text.length > 20) {
     // Assistant prose carrying instructions/decisions is never replaced by a
     // pointer — the same protection applies as in truncation.
     if (isProtectedAssistantProse(part.text)) return null;
+    if (isReplacementMarker(part.text) || isTruncatedContent(part.text)) return null;
     return part.text;
   }
   // Repeat reads: identical completed tool output is referenced, not repeated.
@@ -295,6 +308,9 @@ function dedupeCandidate(part: Part): string | null {
     typeof part.state.output === "string" &&
     part.state.output.length > 20
   ) {
+    if (isReplacementMarker(part.state.output) || isTruncatedContent(part.state.output)) {
+      return null;
+    }
     return part.state.output;
   }
   return null;
@@ -315,7 +331,7 @@ export function deduplicateMessageParts(messages: MessageItem[]): number {
       const hash = simpleHash(content);
       const first = seen.get(hash);
       if (first && first.content === content) {
-        const marker = `↑ see above (message ${first.msgIdx + 1})`;
+        const marker = `${REPLACEMENT_MARKER_PREFIX}${first.msgIdx + 1})`;
         if (part.type === "text") {
           part.text = marker;
         } else if (part.state) {
@@ -368,11 +384,13 @@ export function compactMessageHistory(messages: MessageItem[], sessionID?: strin
   const messagesBefore = messages.length;
   const sessionId = extractSessionId(messages);
 
-  // Step 1: Truncate long tool outputs + assistant prose (separate policies)
-  const { count: truncations, perTool } = truncateMessagePartsInternal(messages);
-
-  // Step 2: Deduplicate repeated outputs (including repeat tool reads)
+  // Step 1: Deduplicate repeated outputs on their ORIGINAL content. Truncation
+  // must not run first: distinct logs sharing the same retained head and tail
+  // would otherwise be collapsed into a pointer (information loss).
   const duplicates = deduplicateMessageParts(messages);
+
+  // Step 2: Truncate long tool outputs + assistant prose (separate policies)
+  const { count: truncations, perTool } = truncateMessagePartsInternal(messages);
 
   const charsAfter = countChars(messages);
   const messagesAfter = messages.length;
