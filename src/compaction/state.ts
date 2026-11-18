@@ -229,7 +229,7 @@ const USER_TURN_KEY_NO_AGENT = "\u0000none";
  * empty input object, so its `sessionID` argument is the shared "default"
  * state key — the per-session identity must come from the message info.
  */
-function extractMessageSessionId(messages: UserTurnMessage[]): string | null {
+export function extractMessageSessionId(messages: UserTurnMessage[]): string | null {
   for (const msg of messages) {
     const id = msg.info?.sessionID;
     if (typeof id === "string" && id.length > 0) return id;

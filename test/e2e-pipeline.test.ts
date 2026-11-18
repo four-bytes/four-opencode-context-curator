@@ -69,20 +69,20 @@ describe("E2E Harness Smoke Test", () => {
   });
 
   it("messages.transform strips compaction signal + triggers summarize", async () => {
-    const input = { sessionID: "e2e" };
     const output = {
       messages: [
-        { info: { role: "user", model: { providerID: "test-provider", modelID: "test-model" } }, parts: [{ type: "text", text: "Hello" }] },
-        { info: { role: "assistant", providerID: "test-provider", modelID: "test-model" }, parts: [{ type: "text", text: "Hi there\n\ncompaction_advice: compact_now\nreason: Test" }] },
+        { info: { role: "user", sessionID: "e2e", model: { providerID: "test-provider", modelID: "test-model" } }, parts: [{ type: "text", text: "Hello" }] },
+        { info: { role: "assistant", sessionID: "e2e", providerID: "test-provider", modelID: "test-model" }, parts: [{ type: "text", text: "Hi there\n\ncompaction_advice: compact_now\nreason: Test" }] },
       ],
     };
-    await messagesTransform(input, output);
+    await messagesTransform({}, output);
     expect(output.messages[1].parts[0].text).toBe("Hi there");
     expect(output.messages[1].parts[0].text).not.toContain("compaction_advice");
     expect(mockSummarize).toHaveBeenCalledTimes(1);
     const callArg = mockSummarize.mock.calls[0][0];
-    const expectedSessionID = process.env.OPENDOC_SESSION_ID ?? "unknown";
-    expect(callArg.path.id).toBe(expectedSessionID);
+    // The real session id comes from the messages — the empty transform input
+    // carries no session id.
+    expect(callArg.path.id).toBe("e2e");
     expect(callArg.query.directory).toBeDefined();
   });
 

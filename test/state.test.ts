@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { clearSignal, getCompactionState, setLastSignal, setCompactingActive, incrementTurnsSinceCompaction, resetTurnsSinceCompaction, getTurnsSinceCompaction, isInstructionSent, markInstructionSent } from "../src/compaction/state.js";
+import { clearSignal, getCompactionState, setLastSignal, setCompactingActive, incrementTurnsSinceCompaction, resetTurnsSinceCompaction, getTurnsSinceCompaction, isInstructionSent, markInstructionSent, setCompactionCooldown, getCompactionCooldownRemaining, extractMessageSessionId } from "../src/compaction/state.js";
 
 describe("setLastSignal / getCompactionState / clearSignal", () => {
   afterEach(() => {
@@ -83,5 +83,53 @@ describe("instructionSent", () => {
   it("can be marked sent", () => {
     markInstructionSent("instr-test");
     expect(isInstructionSent("instr-test")).toBe(true);
+  });
+});
+
+describe("real session ids get fully independent state", () => {
+  const sessionA = "real-session-a";
+  const sessionB = "real-session-b";
+
+  it("does not leak lastSignal or compactingActive between sessions", () => {
+    clearSignal(sessionA);
+    clearSignal(sessionB);
+    setCompactingActive(sessionA, false);
+    setCompactingActive(sessionB, false);
+
+    setLastSignal(sessionA, { advice: "compact_now" as const, reason: "a is full" });
+    setCompactingActive(sessionA, true);
+    setCompactionCooldown(sessionA, 4);
+    incrementTurnsSinceCompaction(sessionA);
+
+    // Everything set under A must stay invisible to B.
+    expect(getCompactionState(sessionB).lastSignal).toBeNull();
+    expect(getCompactionState(sessionB).compactingActive).toBe(false);
+    expect(getCompactionCooldownRemaining(sessionB)).toBe(0);
+    expect(getTurnsSinceCompaction(sessionB)).toBe(0);
+
+    // And A keeps exactly what was set.
+    expect(getCompactionState(sessionA).lastSignal?.advice).toBe("compact_now");
+    expect(getCompactionState(sessionA).compactingActive).toBe(true);
+    expect(getCompactionCooldownRemaining(sessionA)).toBe(4);
+    expect(getTurnsSinceCompaction(sessionA)).toBe(1);
+
+    setCompactingActive(sessionA, false);
+    resetTurnsSinceCompaction(sessionA);
+    clearSignal(sessionA);
+  });
+});
+
+describe("extractMessageSessionId", () => {
+  it("returns the real session id carried by the messages", () => {
+    const messages = [
+      { info: { role: "user", sessionID: "real-session" } },
+      { info: { role: "assistant" } },
+    ];
+    expect(extractMessageSessionId(messages)).toBe("real-session");
+  });
+
+  it("returns null when no message carries a session id", () => {
+    expect(extractMessageSessionId([{ info: { role: "user" } }])).toBeNull();
+    expect(extractMessageSessionId([{ info: { role: "user", sessionID: "" } }])).toBeNull();
   });
 });
