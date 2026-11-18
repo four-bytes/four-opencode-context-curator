@@ -79,6 +79,11 @@ tool loops within one user turn do not advance the counter or the cooldown.
 Environment overrides have the highest precedence:
 `CC_AUTO_TOKEN_THRESHOLD`, `CC_AUTO_TURN_THRESHOLD`, `CC_COMPACTION_COOLDOWN_TURNS`.
 
+Native compaction fires **first** here; the `four-opencode-token-budget-guard`
+is the fallback — it only warns at its `softLimit` and cancels the request at its
+`hardLimit`. Keep `autoTokenThreshold` below the guard's `softLimit` so compaction
+runs before the guard intervenes.
+
 ### Emergency switch: native compaction off
 
 `CC_DISABLE_NATIVE_COMPACTION=1` disables the native `session.summarize` call
