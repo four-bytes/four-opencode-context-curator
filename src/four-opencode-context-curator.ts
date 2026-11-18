@@ -69,9 +69,14 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
     const cached = childSessionCache.get(realSessionID);
     if (cached !== undefined) return cached;
     try {
+      // `throwOnError` makes HTTP failures throw instead of returning them in
+      // `res.error`, so a failed lookup lands in the catch below and is never
+      // cached as "root". This SDK's generated method takes a single options
+      // object (see `OpencodeClient#session.get`), not a second options arg.
       const res = await client.session.get({
         path: { id: realSessionID },
         query: { directory: process.cwd() },
+        throwOnError: true,
       });
       const parentID = (res as { data?: { parentID?: string | null } }).data?.parentID;
       const isChild = typeof parentID === "string" && parentID.length > 0;

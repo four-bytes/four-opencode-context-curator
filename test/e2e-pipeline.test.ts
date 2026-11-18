@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, mock } from "bun:test";
 import { FourContextCuratorPlugin } from "../src/four-opencode-context-curator";
-import { clearSignal, clearTransformState, getCompactionState, setLastSignal } from "../src/compaction/state";
+import { clearSignal, clearTransformState, getCompactionState, setCompactionCooldown, setLastSignal } from "../src/compaction/state";
 
 const mockSummarize = mock().mockResolvedValue(undefined);
 const mockGet = mock().mockResolvedValue({ data: {} });
@@ -151,6 +151,7 @@ describe("native compaction is root-session only", () => {
     expect(mockGet.mock.calls[0][0]).toEqual({
       path: { id: sid },
       query: { directory: process.cwd() },
+      throwOnError: true,
     });
     expect(mockSummarize).not.toHaveBeenCalled();
     // Signal is still stripped from visible output.
@@ -177,6 +178,27 @@ describe("native compaction is root-session only", () => {
     expect(mockSummarize).not.toHaveBeenCalled();
   });
 
+  it("positive control: the same history DOES auto-trigger for the root session", async () => {
+    const sid = "e2e-root-auto";
+    clearSignal(sid);
+    clearTransformState(sid);
+    mockGet.mockResolvedValue({ data: { parentID: undefined } });
+
+    const output = {
+      messages: [
+        { info: { role: "user", id: "u1", sessionID: sid }, parts: [{ type: "text", text: "go" }] },
+        { info: { role: "assistant", id: "a1", sessionID: sid }, parts: [{ type: "text", text: "x".repeat(300_000) }] },
+      ],
+    };
+    await messagesTransform({ sessionID: sid }, output);
+    await messagesTransform({ sessionID: sid }, output);
+    await messagesTransform({ sessionID: sid }, output);
+
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(mockSummarize).toHaveBeenCalledTimes(1);
+    expect(mockSummarize.mock.calls[0][0].path.id).toBe(sid);
+  });
+
   it("still summarizes the root session (no parentID)", async () => {
     const sid = "e2e-root-signal";
     clearSignal(sid);
@@ -201,5 +223,27 @@ describe("native compaction is root-session only", () => {
 
     expect(mockGet).toHaveBeenCalledTimes(1);
     expect(mockSummarize).not.toHaveBeenCalled();
+  });
+
+  it("falls back to root when the parent lookup fails, without caching it", async () => {
+    const sid = "e2e-lookup-fail";
+    clearSignal(sid);
+    clearTransformState(sid);
+    mockGet.mockRejectedValueOnce(new Error("lookup failed"));
+
+    await messagesTransform({ sessionID: sid }, { messages: compactNowHistory(sid) });
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    // Lookup failure → preserve root behaviour.
+    expect(mockSummarize).toHaveBeenCalledTimes(1);
+
+    // Failure must not be cached: a second trigger looks up again.
+    setCompactionCooldown(sid, 0);
+    clearSignal(sid);
+    clearTransformState(sid);
+    mockGet.mockResolvedValueOnce({ data: {} });
+    await messagesTransform({ sessionID: sid }, { messages: compactNowHistory(sid) });
+
+    expect(mockGet).toHaveBeenCalledTimes(2);
+    expect(mockSummarize).toHaveBeenCalledTimes(2);
   });
 });
