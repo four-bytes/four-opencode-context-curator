@@ -79,6 +79,13 @@ tool loops within one user turn do not advance the counter or the cooldown.
 Environment overrides have the highest precedence:
 `CC_AUTO_TOKEN_THRESHOLD`, `CC_AUTO_TURN_THRESHOLD`, `CC_COMPACTION_COOLDOWN_TURNS`.
 
+### Emergency switch: native compaction off
+
+`CC_DISABLE_NATIVE_COMPACTION=1` disables the native `session.summarize` call
+(the `/compact` equivalent) while keeping the plugin's own message pruning.
+Set it before opencode starts. Emergency off-switch only — remove it once the
+native hang is fixed upstream.
+
 ### Truncation policy
 
 Assistant prose and tool logs are handled separately:
