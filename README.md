@@ -94,7 +94,9 @@ decisions, or actionable errors is never truncated. Truncated tool logs keep the
 header and footer plus a bounded excerpt of up to 100 critical lines
 (instructions, decisions, actionable errors) from the omitted middle section;
 logs with more critical lines keep the first 100 of them. Identical repeated
-tool output (repeat reads) is replaced with a reference to its first occurrence.
+tool output (repeat reads) and identical ordinary assistant text longer than 20
+characters are replaced with a reference to their first occurrence; protected
+assistant prose is never deduplicated, and the newest turns are left whole.
 
 ## Tools
 

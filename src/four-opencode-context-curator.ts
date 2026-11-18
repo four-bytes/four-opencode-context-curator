@@ -253,8 +253,8 @@ export const FourContextCuratorPlugin: Plugin = async (ctx) => {
 
         // messages.transform runs multiple times per user turn (tool loops).
         // Only a new user message advances the turn counter and the cooldown.
-        // Tracking is per agent, so parent/subagent interleaving cannot advance
-        // the other agent's cooldown.
+        // Tracking is per real session (`info.sessionID`), so parent/subagent
+        // interleaving under the shared state key cannot advance each other.
         if (observeUserTurn(sessionID, msgs, activeAgent)) {
           decrementCompactionCooldown(sessionID);
           incrementTurnsSinceCompaction(sessionID);

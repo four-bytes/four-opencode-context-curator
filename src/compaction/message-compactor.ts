@@ -103,8 +103,10 @@ function collectCriticalLines(lines: string[], start: number, end: number): stri
 function envPositiveInt(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === "") return fallback;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  // Reject partial parses ("200oops" -> 200): only a string of digits counts.
+  if (!/^\d+$/.test(raw)) return fallback;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 interface TruncateSettings {
@@ -174,11 +176,14 @@ export interface TruncationResult {
   perTool: Map<string, ToolStat>;
 }
 
-function truncateMessagePartsInternal(messages: MessageItem[]): TruncationResult {
-  const settings = readTruncateSettings();
-  const minThreshold = settings.headerLines + settings.footerLines + 1;
-
-  // Layer 2: Freshness Guard — determine turn indices (turn = user message boundary)
+/**
+ * Which messages the freshness guard protects: the newest turn and the one
+ * before it (turn = user-message boundary). Truncation leaves them whole, so
+ * dedup consults the same predicate — pointing a protected message at an older
+ * copy would lose the full output once that copy is truncated (cubic P1).
+ * No user messages → nothing is protected.
+ */
+function freshnessProtected(messages: MessageItem[]): boolean[] {
   const messageTurns: number[] = [];
   let currentTurn = -1;
   for (const msg of messages) {
@@ -186,9 +191,16 @@ function truncateMessagePartsInternal(messages: MessageItem[]): TruncationResult
     messageTurns.push(currentTurn);
   }
   const maxTurn = currentTurn;
-  // preserve last 2 turns (current and previous)
-  // When maxTurn < 0 (no user messages), freshness guard is not applied
   const freshnessThreshold = maxTurn - 1;
+  return messageTurns.map((turn) => maxTurn >= 0 && turn >= freshnessThreshold);
+}
+
+function truncateMessagePartsInternal(messages: MessageItem[]): TruncationResult {
+  const settings = readTruncateSettings();
+  const minThreshold = settings.headerLines + settings.footerLines + 1;
+
+  // Layer 2: Freshness Guard — preserve the last 2 turns (current and previous)
+  const fresh = freshnessProtected(messages);
 
   let truncations = 0;
   const perTool = new Map<string, ToolStat>();
@@ -207,11 +219,8 @@ function truncateMessagePartsInternal(messages: MessageItem[]): TruncationResult
     // NEVER truncate user messages — they contain task prompts/instructions
     if (msg.info.role === "user") continue;
 
-    // Layer 2: Freshness Guard — skip messages in the last 2 turns
-    // maxTurn < 0 (no user messages) → guard not applied
-    // maxTurn = 0 (1 turn) → all preserved (freshnessThreshold = -1)
-    // maxTurn = 1 (2 turns) → all preserved (freshnessThreshold = 0)
-    if (maxTurn >= 0 && messageTurns[msgIdx] >= freshnessThreshold) continue;
+    // Layer 2: Freshness Guard — skip messages in the last 2 turns.
+    if (fresh[msgIdx]) continue;
 
     // Layer 3: Per-Tool-Type Thresholds. `task` subagent logs get 2.5x.
     let toolThreshold = Math.max(settings.maxToolLines, minThreshold);
@@ -317,6 +326,11 @@ function dedupeCandidate(part: Part): string | null {
 }
 
 export function deduplicateMessageParts(messages: MessageItem[]): number {
+  // Dedup runs before truncation and replays on the ORIGINAL content. A message
+  // the freshness guard keeps whole must never be replaced by a pointer to an
+  // older copy that truncation then cuts to an excerpt — the full output would
+  // vanish from context (cubic P1). Skip those messages entirely.
+  const fresh = freshnessProtected(messages);
   // Store the content next to the index: a 32-bit hash collision must never
   // cause two different outputs to be treated as duplicates (information loss).
   const seen = new Map<string, { msgIdx: number; content: string }>();
@@ -325,6 +339,7 @@ export function deduplicateMessageParts(messages: MessageItem[]): number {
     const msg = messages[msgIdx];
     // NEVER deduplicate user messages — they contain unique prompts
     if (msg.info.role === "user") continue;
+    if (fresh[msgIdx]) continue;
     for (const part of msg.parts) {
       const content = dedupeCandidate(part);
       if (content === null) continue;

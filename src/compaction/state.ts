@@ -27,14 +27,15 @@ export interface CompactionState {
   /** Per-turn token estimate history (appended on every setLastTokenEstimate). */
   tokenHistory: number[];
   /**
-   * Per-agent user-turn trackers. Keyed by agent name so parent and subagent
-   * turns cannot advance each other's cooldown when messages interleave.
+   * Per-real-session user-turn trackers. Keyed by the `info.sessionID` carried
+   * by the messages so parent and subagent turns cannot advance each other's
+   * cooldown when messages interleave under the shared "default" state key.
    */
-  userTurnsByAgent: Map<string, UserTurnTracker>;
+  userTurnsBySession: Map<string, UserTurnTracker>;
 }
 
 export interface UserTurnTracker {
-  /** ID of the newest user message seen for this agent, null when it carried no ID. */
+  /** ID of the newest user message seen for this session, null when it carried no ID. */
   lastUserMessageId: string | null;
   /** Number of user messages in the last observed history (fallback when IDs are absent). */
   lastUserMessageCount: number;
@@ -57,7 +58,7 @@ function getSessionState(sessionID: string = "default"): CompactionState {
       instructionSent: false,
       lastAgent: null,
       tokenHistory: [],
-      userTurnsByAgent: new Map(),
+      userTurnsBySession: new Map(),
     };
     sessionStates.set(sessionID, s);
   }
@@ -174,7 +175,7 @@ export function getTurnsSinceCompaction(sessionID: string = "default"): number {
 }
 
 export interface UserTurnMessage {
-  info?: { role?: string; id?: unknown };
+  info?: { role?: string; id?: unknown; sessionID?: unknown };
 }
 
 /**
@@ -187,17 +188,39 @@ export interface UserTurnMessage {
  */
 const USER_TURN_KEY_NO_AGENT = "\u0000none";
 
+/**
+ * Real session id carried by the messages. `messages.transform` receives an
+ * empty input object, so its `sessionID` argument is the shared "default"
+ * state key — the per-session identity must come from the message info.
+ */
+function extractMessageSessionId(messages: UserTurnMessage[]): string | null {
+  for (const msg of messages) {
+    const id = msg.info?.sessionID;
+    if (typeof id === "string" && id.length > 0) return id;
+  }
+  return null;
+}
+
 export function observeUserTurn(
   sessionID: string,
   messages: UserTurnMessage[],
   agent?: string | null,
 ): boolean {
   const state = getSessionState(sessionID);
+
+  // Track per REAL session, never per shared state key: parent and subagent
+  // messages interleave under "default", so one tracker would make every
+  // switch look like a new turn and advance the cooldown too fast. Fall back
+  // to the agent (then the state key) when messages carry no session id.
+  const realSessionId = extractMessageSessionId(messages);
   const agentKey = agent && agent.length > 0 ? agent : USER_TURN_KEY_NO_AGENT;
-  let tracker = state.userTurnsByAgent.get(agentKey);
+  const trackerKey =
+    realSessionId !== null ? `session\u0000${realSessionId}` : `${sessionID}\u0000${agentKey}`;
+
+  let tracker = state.userTurnsBySession.get(trackerKey);
   if (!tracker) {
     tracker = { lastUserMessageId: null, lastUserMessageCount: 0 };
-    state.userTurnsByAgent.set(agentKey, tracker);
+    state.userTurnsBySession.set(trackerKey, tracker);
   }
 
   let userCount = 0;

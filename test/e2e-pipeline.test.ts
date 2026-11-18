@@ -262,6 +262,20 @@ describe("native compaction is root-session only", () => {
     ];
   }
 
+  // Turn accounting advances only on a NEW user message (#164), so three turns
+  // need three distinct user ids — not the same history transformed thrice.
+  function growingTurns(sid: string, count: number) {
+    const messages: any[] = [];
+    for (let i = 1; i <= count; i++) {
+      messages.push({ info: { role: "user", id: `u${i}`, sessionID: sid }, parts: [{ type: "text", text: "go" }] });
+      messages.push({
+        info: { role: "assistant", id: `a${i}`, sessionID: sid },
+        parts: [{ type: "text", text: i === count ? "x".repeat(300_000) : "ok" }],
+      });
+    }
+    return messages;
+  }
+
   it("skips compact_now for a child (subagent) session", async () => {
     const sid = "e2e-child-signal";
     clearSignal(sid);
@@ -288,16 +302,10 @@ describe("native compaction is root-session only", () => {
     clearTransformState(sid);
     mockGet.mockResolvedValue({ data: { parentID: "e2e-root" } });
 
-    // > 50k estimated tokens (chars/4) and >= 3 turns since compaction.
-    const output = {
-      messages: [
-        { info: { role: "user", id: "u1", sessionID: sid }, parts: [{ type: "text", text: "go" }] },
-        { info: { role: "assistant", id: "a1", sessionID: sid }, parts: [{ type: "text", text: "x".repeat(300_000) }] },
-      ],
-    };
-    await messagesTransform({ sessionID: sid }, output);
-    await messagesTransform({ sessionID: sid }, output);
-    await messagesTransform({ sessionID: sid }, output);
+    // > 50k estimated tokens (chars/4) and >= 3 distinct turns since compaction.
+    await messagesTransform({ sessionID: sid }, { messages: growingTurns(sid, 1) });
+    await messagesTransform({ sessionID: sid }, { messages: growingTurns(sid, 2) });
+    await messagesTransform({ sessionID: sid }, { messages: growingTurns(sid, 3) });
 
     expect(mockSummarize).not.toHaveBeenCalled();
   });
@@ -308,15 +316,9 @@ describe("native compaction is root-session only", () => {
     clearTransformState(sid);
     mockGet.mockResolvedValue({ data: { parentID: undefined } });
 
-    const output = {
-      messages: [
-        { info: { role: "user", id: "u1", sessionID: sid }, parts: [{ type: "text", text: "go" }] },
-        { info: { role: "assistant", id: "a1", sessionID: sid }, parts: [{ type: "text", text: "x".repeat(300_000) }] },
-      ],
-    };
-    await messagesTransform({ sessionID: sid }, output);
-    await messagesTransform({ sessionID: sid }, output);
-    await messagesTransform({ sessionID: sid }, output);
+    await messagesTransform({ sessionID: sid }, { messages: growingTurns(sid, 1) });
+    await messagesTransform({ sessionID: sid }, { messages: growingTurns(sid, 2) });
+    await messagesTransform({ sessionID: sid }, { messages: growingTurns(sid, 3) });
 
     expect(mockGet).toHaveBeenCalledTimes(1);
     expect(mockSummarize).toHaveBeenCalledTimes(1);

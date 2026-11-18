@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -41,7 +41,31 @@ function msg(role: string, parts: Part[], id?: string): MessageItem {
   return { info: { role, ...(id ? { id } : {}) }, parts };
 }
 
+// Every truncation assertion below assumes the documented defaults. Pin the
+// CC_* knobs for the whole file and restore the caller's values afterwards, so
+// a configured environment (or a leaked override from another test) cannot
+// change the outcome.
+const TRUNCATION_ENV_DEFAULTS: Record<string, string> = {
+  CC_MAX_TOOL_LINES: "200",
+  CC_MAX_ASSISTANT_LINES: "400",
+  CC_TOOL_HEADER_LINES: "20",
+  CC_TOOL_FOOTER_LINES: "20",
+};
+const savedEnv = new Map<string, string | undefined>();
+
+beforeEach(() => {
+  for (const [key, value] of Object.entries(TRUNCATION_ENV_DEFAULTS)) {
+    savedEnv.set(key, process.env[key]);
+    process.env[key] = value;
+  }
+});
+
 afterEach(() => {
+  for (const [key, value] of savedEnv) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  savedEnv.clear();
   clearSignal("accounting");
   clearSignal("dedup");
   removeDiaryEntries(TEST_SESSION);
@@ -145,6 +169,30 @@ describe("repeat reads", () => {
     expect(deduplicateMessageParts(messages)).toBe(0);
     expect(messages[1].parts[0].state!.output).toBe("second unique read output");
   });
+
+  it("never points a freshness-protected message at a copy truncation will cut", () => {
+    // Older long output and an identical recent copy. Dedup runs before
+    // truncation, so replacing the recent copy with a pointer would lose the
+    // full output once the older copy becomes an excerpt.
+    const big = Array.from({ length: 500 }, (_, i) => `line ${i + 1}`).join("\n");
+    const messages: MessageItem[] = [
+      msg("user", [text("go")], "u1"),
+      msg("assistant", [toolOutput("bash", big)], "a1"),
+      msg("user", [text("next")], "u2"),
+      msg("assistant", [text("ok")], "a2"),
+      msg("user", [text("again")], "u3"),
+      msg("assistant", [toolOutput("bash", big)], "a3"),
+    ];
+    for (const m of messages) m.info.sessionID = TEST_SESSION;
+
+    deduplicateMessageParts(messages);
+    truncateMessageParts(messages);
+
+    // The recent (freshness-protected) copy stays complete.
+    expect(messages[5].parts[0].state!.output).toBe(big);
+    // The older copy is still truncated to an excerpt.
+    expect(messages[1].parts[0].state!.output).toContain("lines truncated");
+  });
 });
 
 describe("observeUserTurn", () => {
@@ -217,6 +265,19 @@ describe("observeUserTurn per-agent tracking", () => {
     const sidNoIds = "turn-test-agents-noids";
     expect(observeUserTurn(sidNoIds, [noId], "parent")).toBe(true);
     expect(observeUserTurn(sidNoIds, [noId], "subagent")).toBe(true);
+  });
+
+  it("keeps interleaved real sessions apart via info.sessionID", () => {
+    // Same shared "default"-style state key, two REAL sessions interleaving.
+    const sid = "turn-test-sessions";
+    const parent = (id: string) => ({ info: { role: "user" as const, id, sessionID: "parent-session" } });
+    const sub = (id: string) => ({ info: { role: "user" as const, id, sessionID: "sub-session" } });
+
+    expect(observeUserTurn(sid, [parent("p1")])).toBe(true);
+    expect(observeUserTurn(sid, [sub("s1")])).toBe(true);
+    // Switching back to the parent is not a new parent turn.
+    expect(observeUserTurn(sid, [parent("p1")])).toBe(false);
+    expect(observeUserTurn(sid, [sub("s1")])).toBe(false);
   });
 });
 
